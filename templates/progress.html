@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>生成中... - センテンスつくーる</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', 'Noto Sans JP', sans-serif; }
+    @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+    .skeleton { background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+    @keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(8, 145, 178, 0.6); } 100% { box-shadow: 0 0 0 14px rgba(8, 145, 178, 0); } }
+    .ring-pulse { animation: pulse-ring 1.5s infinite; }
+    @keyframes pop-in { 0% { opacity: 0; transform: scale(0.92); } 100% { opacity: 1; transform: scale(1); } }
+    .pop-in { animation: pop-in 0.4s ease-out; }
+    .table-row { transition: background 0.15s; }
+    .table-row:hover { background: #f0fdfa; }
+    .scroll-y::-webkit-scrollbar { width: 6px; }
+    .scroll-y::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+    .chapter-bar { background: linear-gradient(90deg, #06b6d4, #3b82f6); }
+    /* sticky table headers */
+    thead th { position: sticky; top: 0; background: #f9fafb; z-index: 10; }
+    .thumb-cell { min-width: 80px; }
+    .thumb-img { width: 80px; height: 45px; object-fit: cover; border-radius: 4px; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+    .thumb-img:hover { transform: scale(1.05); }
+    .sentence-cell { max-width: 480px; word-break: break-word; line-height: 1.5; }
+    .chapter-cell, .block-cell { vertical-align: top; font-weight: 600; color: #075985; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <nav class="bg-white/90 backdrop-blur border-b border-gray-200 sticky top-0 z-50">
+    <div class="max-w-[1600px] mx-auto px-6 h-14 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-600 to-blue-600 flex items-center justify-center">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6z"/></svg>
+        </div>
+        <span class="font-bold text-gray-900 text-base">センテンスつくーる</span>
+      </a>
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-gray-400 font-mono">{{ job_id }}</span>
+        <a href="/" class="text-xs text-cyan-600 hover:underline">+ 新規ジョブ</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="max-w-[1600px] mx-auto px-6 py-6">
+
+    <!-- ヘッダー & 進捗バー -->
+    <div class="bg-white rounded-2xl border border-gray-200 p-6 mb-6 shadow-sm">
+      <div class="flex items-start justify-between gap-4 mb-4">
+        <div class="flex-1 min-w-0">
+          <h1 id="jobTitle" class="text-xl font-bold text-gray-900 truncate">生成中...</h1>
+          <p id="jobMessage" class="text-sm text-gray-500 mt-1">原稿を分析しています...</p>
+        </div>
+        <div id="statusBadge" class="flex-shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 text-sm font-medium">
+          <span class="w-2 h-2 bg-blue-500 rounded-full ring-pulse"></span>
+          <span>実行中</span>
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex gap-3 text-xs text-gray-500">
+            <span>Phase <span id="phaseNum" class="font-semibold text-gray-900">0</span>/3</span>
+            <span class="text-gray-300">|</span>
+            <span class="font-semibold text-cyan-600" id="overallPercent">0%</span>
+          </div>
+          <div class="text-xs text-gray-500 hidden md:block">
+            並列: <span id="concurrencyVal" class="font-semibold text-gray-900">--</span>枚同時 ·
+            <span id="providerLabel">--</span>
+          </div>
+        </div>
+        <div class="h-2 bg-gray-100 rounded-full overflow-hidden">
+          <div id="overallBar" class="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-500" style="width:0%"></div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-4 gap-3" id="rowSummary">
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+          <div class="text-2xl font-bold text-gray-900" id="totalCount">0</div>
+          <div class="text-xs text-gray-500 mt-0.5">合計</div>
+        </div>
+        <div class="bg-yellow-50 rounded-lg p-3 text-center">
+          <div class="text-2xl font-bold text-yellow-600" id="generatingCount">0</div>
+          <div class="text-xs text-gray-500 mt-0.5">生成中</div>
+        </div>
+        <div class="bg-green-50 rounded-lg p-3 text-center">
+          <div class="text-2xl font-bold text-green-600" id="completedCount">0</div>
+          <div class="text-xs text-gray-500 mt-0.5">完了</div>
+        </div>
+        <div class="bg-red-50 rounded-lg p-3 text-center">
+          <div class="text-2xl font-bold text-red-600" id="failedCount">0</div>
+          <div class="text-xs text-gray-500 mt-0.5">失敗</div>
+        </div>
+      </div>
+
+      <div id="actions" class="hidden mt-5 flex flex-wrap gap-3">
+        <a id="downloadCsvBtn" href="" class="inline-flex items-center gap-2 px-5 py-2.5 bg-white border-2 border-cyan-600 text-cyan-700 font-medium rounded-xl hover:bg-cyan-50 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          CSV ダウンロード（スプレッドシート用）
+        </a>
+        <a id="downloadBtn" href="" class="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-medium rounded-xl hover:from-cyan-700 hover:to-blue-700 transition shadow-md">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/></svg>
+          画像+CSV を ZIP でダウンロード
+        </a>
+        <a href="/" class="inline-flex items-center gap-2 px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition">
+          + 新しいジョブ
+        </a>
+      </div>
+    </div>
+
+    <!-- メイン: テーブル + サイドログ -->
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+
+      <div class="lg:col-span-3">
+        <div class="bg-white rounded-2xl border border-gray-200 p-3 shadow-sm">
+          <div class="flex items-center justify-between mb-3 px-2 pt-1">
+            <h2 class="text-sm font-semibold text-gray-900">センテンス図解テーブル</h2>
+            <div class="flex items-center gap-2 text-xs text-gray-400">
+              <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-gray-300"></span>待機</span>
+              <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>生成中</span>
+              <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-green-500"></span>完了</span>
+              <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-red-500"></span>失敗</span>
+              <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-purple-400"></span>スキップ</span>
+            </div>
+          </div>
+          <div class="overflow-x-auto max-h-[80vh] scroll-y border-t border-gray-100">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-xs text-gray-500 border-b border-gray-200">
+                  <th class="px-2 py-2 text-left w-24">章</th>
+                  <th class="px-2 py-2 text-left w-32">ブロック</th>
+                  <th class="px-2 py-2 text-left">センテンス</th>
+                  <th class="px-2 py-2 text-center w-14">№</th>
+                  <th class="px-2 py-2 text-center w-24">図解</th>
+                  <th class="px-2 py-2 text-center w-28">Web画像</th>
+                </tr>
+              </thead>
+              <tbody id="rowsTbody">
+                <tr><td colspan="6" class="text-center text-sm text-gray-400 py-12">分解中...しばらくお待ちください</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="lg:col-span-1">
+        <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm sticky top-20">
+          <h2 class="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+            <svg class="w-4 h-4 text-cyan-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026"/></svg>
+            アクティビティ
+          </h2>
+          <div id="logsContainer" class="space-y-2 max-h-[600px] overflow-y-auto scroll-y text-xs">
+            <p class="text-gray-400 text-center py-6">起動を待機しています...</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 拡大表示モーダル -->
+  <div id="modal" class="hidden fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-6" onclick="closeModal(event)">
+    <div class="max-w-5xl w-full bg-white rounded-2xl overflow-hidden shadow-2xl" onclick="event.stopPropagation()">
+      <div class="flex items-center justify-between px-5 py-3 border-b border-gray-200">
+        <div class="min-w-0 flex-1">
+          <p id="modalNo" class="text-xs text-gray-500 mb-0.5"></p>
+          <p id="modalSentence" class="text-sm text-gray-900"></p>
+        </div>
+        <button onclick="closeModal()" class="text-gray-400 hover:text-gray-700 text-2xl leading-none flex-shrink-0">&times;</button>
+      </div>
+      <div class="bg-gray-100 flex items-center justify-center p-4">
+        <img id="modalImg" src="" class="max-w-full max-h-[70vh] object-contain rounded-lg shadow">
+      </div>
+      <div class="px-5 py-3 border-t border-gray-200 bg-gray-50 grid grid-cols-2 gap-3 text-xs">
+        <div>
+          <p class="text-gray-500 mb-1">章 / ブロック</p>
+          <p id="modalChapter" class="text-gray-800"></p>
+        </div>
+        <div>
+          <p class="text-gray-500 mb-1">画像内に許可された日本語</p>
+          <p id="modalTerms" class="text-gray-800 font-mono"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const JOB_ID = "{{ job_id }}";
+    let logsSince = 0;
+    let stopped = false;
+
+    const els = {
+      jobTitle: document.getElementById('jobTitle'),
+      jobMessage: document.getElementById('jobMessage'),
+      statusBadge: document.getElementById('statusBadge'),
+      phaseNum: document.getElementById('phaseNum'),
+      overallBar: document.getElementById('overallBar'),
+      overallPercent: document.getElementById('overallPercent'),
+      concurrencyVal: document.getElementById('concurrencyVal'),
+      providerLabel: document.getElementById('providerLabel'),
+      totalCount: document.getElementById('totalCount'),
+      generatingCount: document.getElementById('generatingCount'),
+      completedCount: document.getElementById('completedCount'),
+      failedCount: document.getElementById('failedCount'),
+      rowsTbody: document.getElementById('rowsTbody'),
+      logsContainer: document.getElementById('logsContainer'),
+      actions: document.getElementById('actions'),
+      downloadBtn: document.getElementById('downloadBtn'),
+      downloadCsvBtn: document.getElementById('downloadCsvBtn'),
+    };
+
+    function escapeHtml(s) {
+      if (s === null || s === undefined) return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    }
+
+    function statusBadgeHtml(status) {
+      const map = {
+        running:    { color: 'bg-blue-50 text-blue-700',   dot: 'bg-blue-500 ring-pulse',   label: '実行中' },
+        queued:     { color: 'bg-gray-100 text-gray-700',  dot: 'bg-gray-400',             label: '待機中' },
+        completed:  { color: 'bg-green-50 text-green-700', dot: 'bg-green-500',            label: '完了' },
+        error:      { color: 'bg-red-50 text-red-700',     dot: 'bg-red-500',              label: 'エラー' },
+      };
+      const v = map[status] || map.running;
+      return `<span class="w-2 h-2 ${v.dot} rounded-full"></span><span>${v.label}</span>`;
+    }
+
+    function thumbCellHtml(row) {
+      const status = row.status || 'pending';
+      const filename = row.filename;
+      if (status === 'ok' && filename) {
+        return `<img src="/results/${JOB_ID}/images/${filename}" class="thumb-img pop-in" onclick='openModal(${row.no})' alt="" loading="lazy">`;
+      } else if (status === 'generating') {
+        return `<div class="skeleton w-20 h-[45px] rounded flex items-center justify-center mx-auto">
+                  <div class="w-4 h-4 border-2 border-cyan-200 border-t-cyan-600 rounded-full animate-spin"></div>
+                </div>`;
+      } else if (status === 'failed') {
+        return `<div class="w-20 h-[45px] bg-red-50 rounded flex items-center justify-center mx-auto" title="${escapeHtml(row.error || '失敗')}">
+                  <svg class="w-4 h-4 text-red-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                </div>`;
+      } else if (status === 'skipped') {
+        return `<div class="w-20 h-[45px] bg-purple-50 rounded flex items-center justify-center mx-auto text-purple-400 text-[10px]">スキップ</div>`;
+      } else if (status === 'thinned' || status === 'skipped_limit') {
+        return `<div class="w-20 h-[45px] bg-orange-50 rounded flex items-center justify-center mx-auto text-orange-400 text-[10px]" title="均等配置のため間引き">間引き</div>`;
+      } else {
+        return `<div class="w-20 h-[45px] bg-gray-50 rounded flex items-center justify-center mx-auto text-gray-300 text-[10px]">待機</div>`;
+      }
+    }
+
+    function webCellHtml(row) {
+      const thumb = row.web_thumb_url || '';
+      const src = row.web_source_url || '';
+      const topic = row.web_topic || '';
+      if (!src) return `<div class="text-gray-300 text-[10px] text-center">―</div>`;
+      const thumbHtml = thumb
+        ? `<img src="${escapeHtml(thumb)}" class="thumb-img" alt="" loading="lazy" onerror="this.style.display='none'">`
+        : `<div class="w-20 h-[45px] bg-purple-50 rounded flex items-center justify-center mx-auto"><svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"/></svg></div>`;
+      return `
+        <a href="${escapeHtml(src)}" target="_blank" rel="noopener" class="block hover:opacity-80" title="${escapeHtml(topic)}: ${escapeHtml(src)}">
+          ${thumbHtml}
+          <div class="text-[10px] text-purple-600 truncate mt-0.5">${escapeHtml(topic.substring(0, 18))}</div>
+        </a>`;
+    }
+
+    function rebuildTable(rows) {
+      rows.sort((a, b) => (a.no || 0) - (b.no || 0));
+      const tbody = els.rowsTbody;
+      const existing = new Set(Array.from(tbody.querySelectorAll('tr[data-no]')).map(e => parseInt(e.dataset.no)));
+
+      // 初回 or 行数大きく変わった → 完全再構築
+      if (existing.size === 0 || existing.size !== rows.length) {
+        tbody.innerHTML = rows.map(rowHtml).join('');
+        return;
+      }
+
+      // 差分更新（thumb / web セルだけ書き換え）
+      rows.forEach(row => {
+        const tr = tbody.querySelector(`tr[data-no="${row.no}"]`);
+        if (!tr) {
+          tbody.insertAdjacentHTML('beforeend', rowHtml(row));
+          return;
+        }
+        const prevStatus = tr.getAttribute('data-status');
+        const prevWebUrl = tr.getAttribute('data-web-url') || '';
+        const newWebUrl = row.web_source_url || '';
+
+        if (prevStatus !== row.status) {
+          tr.setAttribute('data-status', row.status || 'pending');
+          tr.setAttribute('data-filename', row.filename || '');
+          tr.setAttribute('data-error', row.error || '');
+          tr.setAttribute('data-terms', JSON.stringify(row.allowed_terms || []));
+          const thumbCell = tr.querySelector('.thumb-cell');
+          if (thumbCell) thumbCell.innerHTML = thumbCellHtml(row);
+        }
+
+        if (prevWebUrl !== newWebUrl) {
+          tr.setAttribute('data-web-url', newWebUrl);
+          const webCell = tr.querySelector('.web-cell');
+          if (webCell) webCell.innerHTML = webCellHtml(row);
+        }
+      });
+    }
+
+    function rowHtml(row) {
+      const isFirstInBlock = row.sentence_index === 0;
+      const isFirstInChapter = isFirstInBlock && row.block_index === 0;
+      const chapter = isFirstInChapter ? escapeHtml(row.chapter_title || '') : '';
+      const block = isFirstInBlock ? escapeHtml(row.block_text || '').substring(0, 80) + (row.block_text && row.block_text.length > 80 ? '...' : '') : '';
+      const borderClass = isFirstInChapter ? 'border-t-2 border-t-cyan-300' : (isFirstInBlock ? 'border-t border-t-gray-200' : '');
+      return `
+        <tr class="table-row ${borderClass}"
+            data-no="${row.no}"
+            data-status="${row.status || 'pending'}"
+            data-filename="${row.filename || ''}"
+            data-sentence="${escapeHtml(row.sentence || '')}"
+            data-chapter="${escapeHtml(row.chapter_title || '')}"
+            data-block="${escapeHtml((row.block_text || '').substring(0, 200))}"
+            data-error="${escapeHtml(row.error || '')}"
+            data-web-url="${escapeHtml(row.web_source_url || '')}"
+            data-terms='${JSON.stringify(row.allowed_terms || []).replace(/'/g, "&#039;")}'>
+          <td class="px-2 py-2 chapter-cell text-xs">${chapter}</td>
+          <td class="px-2 py-2 block-cell text-xs text-gray-600">${block}</td>
+          <td class="px-2 py-2 sentence-cell">${escapeHtml(row.sentence || '')}</td>
+          <td class="px-2 py-2 text-center text-xs text-gray-400 font-mono">${row.no || ''}</td>
+          <td class="px-2 py-2 thumb-cell text-center">${thumbCellHtml(row)}</td>
+          <td class="px-2 py-2 web-cell text-center">${webCellHtml(row)}</td>
+        </tr>
+      `;
+    }
+
+    function updateSummary(rows) {
+      const total = rows.length;
+      const completed = rows.filter(r => r.status === 'ok').length;
+      const generating = rows.filter(r => r.status === 'generating').length;
+      const failed = rows.filter(r => r.status === 'failed').length;
+      els.totalCount.textContent = total;
+      els.completedCount.textContent = completed;
+      els.generatingCount.textContent = generating;
+      els.failedCount.textContent = failed;
+    }
+
+    async function pollStatus() {
+      try {
+        const res = await fetch(`/api/status/${JOB_ID}`);
+        if (!res.ok) return;
+        const state = await res.json();
+        els.jobMessage.textContent = state.message || '...';
+        els.phaseNum.textContent = state.phase || 0;
+        els.overallBar.style.width = `${state.percent || 0}%`;
+        els.overallPercent.textContent = `${state.percent || 0}%`;
+        if (state.concurrency) els.concurrencyVal.textContent = state.concurrency;
+        if (state.provider) {
+          els.providerLabel.textContent = state.provider === 'gpt-image'
+            ? `gpt-image-2 (${state.openai_quality || 'medium'})`
+            : 'nanobanana';
+        }
+        if (state.title) els.jobTitle.textContent = state.title;
+
+        els.statusBadge.innerHTML = statusBadgeHtml(state.status);
+        const colorMap = {
+          running: 'bg-blue-50 text-blue-700',
+          queued: 'bg-gray-100 text-gray-700',
+          completed: 'bg-green-50 text-green-700',
+          error: 'bg-red-50 text-red-700',
+        };
+        els.statusBadge.className = `flex-shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${colorMap[state.status] || 'bg-gray-100 text-gray-700'}`;
+
+        if (state.status === 'completed') {
+          stopped = true;
+          els.actions.classList.remove('hidden');
+          els.downloadBtn.href = `/download/${JOB_ID}`;
+          els.downloadCsvBtn.href = `/download/csv/${JOB_ID}`;
+        }
+        if (state.status === 'error') stopped = true;
+      } catch (e) { console.error('status error', e); }
+    }
+
+    async function pollRows() {
+      try {
+        const res = await fetch(`/api/rows/${JOB_ID}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const rows = data.rows || [];
+        if (rows.length > 0) {
+          rebuildTable(rows);
+          updateSummary(rows);
+        }
+      } catch (e) { console.error('rows error', e); }
+    }
+
+    async function pollLogs() {
+      try {
+        const res = await fetch(`/api/logs/${JOB_ID}?since=${logsSince}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const newLogs = data.logs || [];
+        if (newLogs.length === 0) return;
+        logsSince += newLogs.length;
+        if (logsSince === newLogs.length) els.logsContainer.innerHTML = '';
+
+        const colorMap = {
+          system: 'bg-gray-50 text-gray-700',
+          splitter: 'bg-purple-50 text-purple-700',
+          prompter: 'bg-pink-50 text-pink-700',
+          generator: 'bg-amber-50 text-amber-700',
+          error: 'bg-red-50 text-red-700',
+          warn: 'bg-yellow-50 text-yellow-700',
+          setup: 'bg-gray-50 text-gray-700',
+        };
+        newLogs.forEach(log => {
+          const div = document.createElement('div');
+          div.className = `p-2 rounded-md ${colorMap[log.category] || 'bg-gray-50 text-gray-700'}`;
+          div.innerHTML = `
+            <div class="flex items-center justify-between gap-2 mb-0.5">
+              <span class="text-[10px] font-mono opacity-60">${log.time}</span>
+              <span class="text-[10px] font-semibold uppercase opacity-70">${log.category}</span>
+            </div>
+            <p class="text-xs leading-snug">${escapeHtml(log.message)}</p>
+            ${log.detail ? `<p class="text-[10px] opacity-70 mt-0.5">${escapeHtml(log.detail)}</p>` : ''}
+          `;
+          els.logsContainer.appendChild(div);
+        });
+        els.logsContainer.scrollTop = els.logsContainer.scrollHeight;
+      } catch (e) { console.error('logs error', e); }
+    }
+
+    function openModal(no) {
+      const tr = document.querySelector(`tr[data-no="${no}"]`);
+      if (!tr) return;
+      const filename = tr.getAttribute('data-filename');
+      if (!filename) return;
+      document.getElementById('modalImg').src = `/results/${JOB_ID}/images/${filename}`;
+      document.getElementById('modalNo').textContent = `№ ${no}`;
+      document.getElementById('modalSentence').textContent = tr.getAttribute('data-sentence') || '';
+      document.getElementById('modalChapter').textContent = (tr.getAttribute('data-chapter') || '') + ' / ' + (tr.getAttribute('data-block') || '').substring(0, 100);
+      try {
+        const terms = JSON.parse(tr.getAttribute('data-terms') || '[]');
+        document.getElementById('modalTerms').textContent = terms.length > 0 ? terms.join(', ') : '（テキストなし）';
+      } catch (e) {
+        document.getElementById('modalTerms').textContent = '';
+      }
+      document.getElementById('modal').classList.remove('hidden');
+    }
+    function closeModal(e) {
+      if (e && e.target.tagName === 'IMG') return;
+      document.getElementById('modal').classList.add('hidden');
+    }
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+    async function tick() {
+      await Promise.all([pollStatus(), pollRows(), pollLogs()]);
+      if (!stopped) {
+        setTimeout(tick, 1500);
+      } else {
+        setTimeout(async () => { await Promise.all([pollRows(), pollLogs()]); }, 1500);
+      }
+    }
+    tick();
+  </script>
+</body>
+</html>

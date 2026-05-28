@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>センテンスつくーる</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', 'Noto Sans JP', sans-serif; }
+    .drop-zone { transition: all 0.2s; }
+    .drop-zone:hover { border-color: #0891b2; background: #ecfeff; }
+    .drop-zone.dragover { border-color: #0891b2; background: #cffafe; }
+    input[type="range"]::-webkit-slider-thumb {
+      appearance: none; width: 20px; height: 20px;
+      background: #0891b2; border-radius: 50%; cursor: pointer;
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 20px; height: 20px;
+      background: #0891b2; border-radius: 50%; cursor: pointer; border: none;
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-cyan-50 via-white to-blue-50 min-h-screen">
+
+  <nav class="bg-white/80 backdrop-blur border-b border-gray-200 sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-600 to-blue-600 flex items-center justify-center">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"/></svg>
+        </div>
+        <span class="font-bold text-gray-900 text-base">センテンスつくーる</span>
+        <span class="hidden md:inline text-xs text-gray-400 ml-2">原稿を1文ずつ図解化</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="hidden md:inline text-xs text-gray-400">Claude + Gemini/OpenAI</span>
+        <a href="/logout" class="text-xs text-gray-400 hover:text-gray-600 transition">ログアウト</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="max-w-6xl mx-auto px-6 py-8">
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-8">
+
+      <div class="lg:col-span-3">
+        <h1 class="text-3xl font-bold text-gray-900 mb-2">新しいセンテンス図解を作成</h1>
+        <p class="text-sm text-gray-500 mb-6">原稿を章/ブロック/センテンスに分解して、各文に図解を割り当てます</p>
+
+        {% if not has_anthropic or (not has_gemini and not has_openai) %}
+        <div class="mb-5 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+          <div class="flex gap-3">
+            <svg class="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
+            <div>
+              <p class="text-sm font-medium text-amber-800">API キーが未設定です</p>
+              <div class="text-xs text-amber-700 mt-1 space-y-0.5">
+                {% if not has_anthropic %}<p>ANTHROPIC_API_KEY（必須）</p>{% endif %}
+                {% if not has_gemini %}<p>GEMINI_API_KEY（nanobanana 用）</p>{% endif %}
+                {% if not has_openai %}<p>OPENAI_API_KEY（gpt-image-2 用）</p>{% endif %}
+              </div>
+              <p class="text-xs text-amber-600 mt-2"><code class="bg-amber-100 px-1.5 py-0.5 rounded">.env</code> に設定してください</p>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        <form id="uploadForm" enctype="multipart/form-data" class="space-y-6">
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              原稿
+              <span class="text-xs text-gray-400 font-normal">（章は3行以上の改行で区切ると認識しやすい）</span>
+            </label>
+
+            <div id="dropZone" class="drop-zone border-2 border-dashed border-gray-300 rounded-xl p-6 text-center cursor-pointer bg-white">
+              <input type="file" id="fileInput" name="manuscript_file" accept=".txt,.md" class="hidden">
+              <svg class="w-10 h-10 text-gray-400 mx-auto mb-2" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 8.25H7.5a2.25 2.25 0 00-2.25 2.25v9a2.25 2.25 0 002.25 2.25h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25H15M9 12l3 3m0 0l3-3m-3 3V2.25"/>
+              </svg>
+              <p id="dropText" class="text-sm text-gray-600">クリックまたはドラッグ&ドロップで .txt / .md ファイル</p>
+              <p class="text-xs text-gray-400 mt-1">下のテキストエリアに直接貼り付けでもOK</p>
+            </div>
+
+            <textarea id="manuscriptText" name="manuscript_text" rows="12"
+                      placeholder="ここに完成原稿を貼り付け（章の区切りは空行2〜3行）"
+                      class="mt-3 w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500 text-sm resize-y"></textarea>
+            <div class="text-xs text-gray-400 mt-1 text-right">
+              <span id="charCount">0</span> 文字（目安: 1000 文字 ≒ 20〜40 センテンス ≒ 20〜40 枚生成）
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              図解スタイルの指示
+              <span class="text-xs text-gray-400 font-normal">（任意・最優先で反映）</span>
+            </label>
+            <textarea name="user_instructions" rows="3"
+                      placeholder="例: 水彩タッチでやわらかい雰囲気にして / 落ち着いたモノトーンで / 子供向けに親しみやすく"
+                      class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500 text-sm"></textarea>
+          </div>
+
+          <!-- モデル選択 -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">画像生成モデル</label>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <label class="relative cursor-pointer">
+                <input type="radio" name="provider" value="nanobanana" class="peer sr-only" checked>
+                <div class="p-4 bg-white border-2 border-gray-200 rounded-xl peer-checked:border-cyan-500 peer-checked:bg-cyan-50 transition hover:border-cyan-300">
+                  <div class="flex items-start gap-3">
+                    <div class="flex-shrink-0 w-10 h-10 rounded-lg bg-gradient-to-br from-yellow-400 to-orange-400 flex items-center justify-center text-xl">🍌</div>
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2 mb-0.5">
+                        <p class="text-sm font-semibold text-gray-900">nanobanana</p>
+                        {% if has_gemini %}
+                        <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">利用可</span>
+                        {% else %}
+                        <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium">キー未設定</span>
+                        {% endif %}
+                      </div>
+                      <p class="text-[11px] text-gray-500 leading-snug">Gemini Flash Image。<strong>高速・安価</strong></p>
+                    </div>
+                  </div>
+                </div>
+              </label>
+              <label class="relative cursor-pointer">
+                <input type="radio" name="provider" value="gpt-image" class="peer sr-only">
+                <div class="p-4 bg-white border-2 border-gray-200 rounded-xl peer-checked:border-blue-500 peer-checked:bg-blue-50 transition hover:border-blue-300">
+                  <div class="flex items-start gap-3">
+                    <div class="flex-shrink-0 w-10 h-10 rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center text-white font-bold text-sm">G2</div>
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2 mb-0.5">
+                        <p class="text-sm font-semibold text-gray-900">gpt-image-2</p>
+                        {% if has_openai %}
+                        <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">利用可</span>
+                        {% else %}
+                        <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">キー未設定</span>
+                        {% endif %}
+                      </div>
+                      <p class="text-[11px] text-gray-500 leading-snug">OpenAI ChatGPT-image。<strong>高品質</strong></p>
+                    </div>
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            <div id="qualityRow" class="mt-3 hidden">
+              <label class="block text-xs font-medium text-gray-600 mb-2">
+                gpt-image-2 の品質 <span class="text-[10px] text-gray-400 ml-1">（品質↑ = コスト↑）</span>
+              </label>
+              <div class="grid grid-cols-3 gap-2">
+                <label class="cursor-pointer">
+                  <input type="radio" name="openai_quality" value="low" class="peer sr-only">
+                  <div class="px-3 py-2 bg-white border border-gray-200 rounded-lg text-center text-xs peer-checked:border-blue-500 peer-checked:bg-blue-50 peer-checked:text-blue-700 peer-checked:font-semibold transition">Low</div>
+                </label>
+                <label class="cursor-pointer">
+                  <input type="radio" name="openai_quality" value="medium" class="peer sr-only" checked>
+                  <div class="px-3 py-2 bg-white border border-gray-200 rounded-lg text-center text-xs peer-checked:border-blue-500 peer-checked:bg-blue-50 peer-checked:text-blue-700 peer-checked:font-semibold transition">Medium <span class="text-[10px] text-gray-400">推奨</span></div>
+                </label>
+                <label class="cursor-pointer">
+                  <input type="radio" name="openai_quality" value="high" class="peer sr-only">
+                  <div class="px-3 py-2 bg-white border border-gray-200 rounded-lg text-center text-xs peer-checked:border-blue-500 peer-checked:bg-blue-50 peer-checked:text-blue-700 peer-checked:font-semibold transition">High</div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- 図解スタイル -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">図解スタイル</label>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <label class="cursor-pointer">
+                <input type="radio" name="style_preset" value="flat_infographic" class="peer sr-only" checked>
+                <div class="px-3 py-3 bg-white border-2 border-gray-200 rounded-lg text-center text-xs peer-checked:border-cyan-500 peer-checked:bg-cyan-50 peer-checked:font-semibold transition">
+                  <div class="text-base mb-1">📊</div>
+                  フラット<br>インフォグラフィック
+                  <div class="text-[10px] text-gray-400 mt-1">推奨</div>
+                </div>
+              </label>
+              <label class="cursor-pointer">
+                <input type="radio" name="style_preset" value="pictogram" class="peer sr-only">
+                <div class="px-3 py-3 bg-white border-2 border-gray-200 rounded-lg text-center text-xs peer-checked:border-cyan-500 peer-checked:bg-cyan-50 peer-checked:font-semibold transition">
+                  <div class="text-base mb-1">⬛</div>
+                  ピクトグラム<br>超シンプル
+                </div>
+              </label>
+              <label class="cursor-pointer">
+                <input type="radio" name="style_preset" value="comic" class="peer sr-only">
+                <div class="px-3 py-3 bg-white border-2 border-gray-200 rounded-lg text-center text-xs peer-checked:border-cyan-500 peer-checked:bg-cyan-50 peer-checked:font-semibold transition">
+                  <div class="text-base mb-1">💬</div>
+                  コミック<br>ストリップ
+                </div>
+              </label>
+              <label class="cursor-pointer">
+                <input type="radio" name="style_preset" value="whiteboard" class="peer sr-only">
+                <div class="px-3 py-3 bg-white border-2 border-gray-200 rounded-lg text-center text-xs peer-checked:border-cyan-500 peer-checked:bg-cyan-50 peer-checked:font-semibold transition">
+                  <div class="text-base mb-1">✏️</div>
+                  手描き<br>ホワイトボード
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- パラメータ：並列度 + 最大枚数 + Web画像 -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="bg-white rounded-xl border border-gray-200 p-4">
+              <label class="block text-sm font-medium text-gray-700 mb-3">
+                並列度
+                <span class="ml-1 text-blue-600 font-bold" id="concurrencyLabel">12</span>
+                <span class="text-xs text-gray-400">枚同時</span>
+              </label>
+              <input type="range" name="concurrency" id="concurrency" min="1" max="24" step="1" value="12" class="w-full">
+              <div class="flex justify-between text-xs text-gray-400 mt-1">
+                <span>1</span><span>12</span><span>24</span>
+              </div>
+            </div>
+
+            <div class="bg-white rounded-xl border border-gray-200 p-4">
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                図解枚数
+                <span class="ml-1 text-blue-600 font-bold" id="maxDiagramsLabel">150</span>
+                <span class="text-xs text-gray-400">枚</span>
+              </label>
+              <p class="text-[10px] text-gray-400 mb-2">全文を均等に間引いて配置（例: 250文 → 50枚なら 5文ごとに 1 枚）</p>
+              <input type="range" name="max_diagrams" id="maxDiagrams" min="10" max="300" step="10" value="150" class="w-full">
+              <div class="flex justify-between text-xs text-gray-400 mt-1">
+                <span>10</span><span>150</span><span>300</span>
+              </div>
+            </div>
+
+            <div class="bg-white rounded-xl border border-purple-200 p-4">
+              <label class="block text-sm font-medium text-gray-700 mb-3">
+                Web画像URL取得
+                <span class="ml-1 text-purple-600 font-bold" id="webImageCountLabel">50</span>
+                <span class="text-xs text-gray-400">件</span>
+              </label>
+              <input type="range" name="web_image_count" id="webImageCount" min="0" max="100" step="10" value="50" class="w-full">
+              <div class="flex justify-between text-xs text-gray-400 mt-1">
+                <span>0 (オフ)</span><span>50</span><span>100</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-xl border border-gray-200 p-4">
+            <label class="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" name="skip_decorative" class="mt-1 w-4 h-4 text-cyan-600 rounded">
+              <div>
+                <span class="text-sm font-medium text-gray-700 block">挨拶や接続詞はスキップ</span>
+                <span class="text-xs text-gray-400">「では」「皆さんこんにちは」など視覚化困難な文は画像生成を省く（コスト削減）</span>
+              </div>
+            </label>
+          </div>
+
+          <button type="submit" id="submitBtn"
+                  class="w-full py-4 bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-bold rounded-xl hover:from-cyan-700 hover:to-blue-700 transition shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
+            <span id="submitText">原稿を分解して図解を一括生成</span>
+          </button>
+
+          <div id="errorBox" class="hidden p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700"></div>
+        </form>
+      </div>
+
+      <div class="lg:col-span-2">
+        <div class="bg-white rounded-xl border border-gray-200 p-5 sticky top-20">
+          <h2 class="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+            <svg class="w-4 h-4 text-cyan-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            最近のジョブ
+          </h2>
+          {% if past_jobs %}
+            <div class="space-y-2 max-h-[600px] overflow-y-auto">
+              {% for job in past_jobs %}
+                <a href="/progress/{{ job.id }}" class="block p-3 rounded-lg border border-gray-100 hover:border-cyan-200 hover:bg-cyan-50 transition">
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="flex-1 min-w-0">
+                      <p class="text-xs font-medium text-gray-900 truncate">{{ job.title or job.id }}</p>
+                      <p class="text-xs text-gray-400 mt-0.5">{{ job.id }}</p>
+                    </div>
+                    <span class="flex-shrink-0 text-xs px-1.5 py-0.5 rounded
+                      {% if job.status == 'completed' %}bg-green-100 text-green-700
+                      {% elif job.status == 'running' %}bg-blue-100 text-blue-700
+                      {% elif job.status == 'error' %}bg-red-100 text-red-700
+                      {% else %}bg-gray-100 text-gray-600{% endif %}">
+                      {% if job.status == 'completed' %}✓ {{ job.generated }}/{{ job.total }}
+                      {% elif job.status == 'running' %}実行中
+                      {% elif job.status == 'error' %}エラー
+                      {% else %}{{ job.status }}{% endif %}
+                    </span>
+                  </div>
+                </a>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="text-xs text-gray-400 text-center py-8">まだジョブがありません</p>
+          {% endif %}
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const dropText = document.getElementById('dropText');
+    const manuscriptText = document.getElementById('manuscriptText');
+    const charCount = document.getElementById('charCount');
+    const concurrency = document.getElementById('concurrency');
+    const concurrencyLabel = document.getElementById('concurrencyLabel');
+    const form = document.getElementById('uploadForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const submitText = document.getElementById('submitText');
+    const errorBox = document.getElementById('errorBox');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files.length > 0) dropText.textContent = `📄 ${fileInput.files[0].name}`;
+    });
+    ['dragenter', 'dragover'].forEach(ev => {
+      dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    });
+    ['dragleave', 'drop'].forEach(ev => {
+      dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.remove('dragover'); });
+    });
+    dropZone.addEventListener('drop', e => {
+      const files = e.dataTransfer.files;
+      if (files.length > 0) { fileInput.files = files; dropText.textContent = `📄 ${files[0].name}`; }
+    });
+
+    manuscriptText.addEventListener('input', () => {
+      charCount.textContent = manuscriptText.value.length.toLocaleString();
+    });
+    concurrency.addEventListener('input', () => { concurrencyLabel.textContent = concurrency.value; });
+
+    const maxDiagrams = document.getElementById('maxDiagrams');
+    const maxDiagramsLabel = document.getElementById('maxDiagramsLabel');
+    maxDiagrams.addEventListener('input', () => { maxDiagramsLabel.textContent = maxDiagrams.value; });
+
+    const webImageCount = document.getElementById('webImageCount');
+    const webImageCountLabel = document.getElementById('webImageCountLabel');
+    webImageCount.addEventListener('input', () => { webImageCountLabel.textContent = webImageCount.value; });
+
+    const qualityRow = document.getElementById('qualityRow');
+    document.querySelectorAll('input[name="provider"]').forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        if (e.target.value === 'gpt-image') {
+          qualityRow.classList.remove('hidden');
+          if (parseInt(concurrency.value) > 8) { concurrency.value = 8; concurrencyLabel.textContent = 8; }
+        } else {
+          qualityRow.classList.add('hidden');
+        }
+      });
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorBox.classList.add('hidden');
+      submitBtn.disabled = true;
+      submitText.textContent = '送信中...';
+      const formData = new FormData(form);
+      try {
+        const res = await fetch('/start', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) {
+          errorBox.textContent = data.error || 'エラーが発生しました';
+          errorBox.classList.remove('hidden');
+          submitBtn.disabled = false;
+          submitText.textContent = '原稿を分解して図解を一括生成';
+          return;
+        }
+        window.location.href = data.redirect;
+      } catch (err) {
+        errorBox.textContent = '通信エラー: ' + err.message;
+        errorBox.classList.remove('hidden');
+        submitBtn.disabled = false;
+        submitText.textContent = '原稿を分解して図解を一括生成';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: sentence-tool
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 600 --workers 2
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_IMAGE_MODEL
+        value: "gpt-image-2"
+      - key: GEMINI_IMAGE_MODEL
+        value: "gemini-3.1-flash-image-preview"
+      - key: APP_PASSWORD
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11.0"
