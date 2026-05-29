@@ -86,6 +86,25 @@ def _build_user_block(user_instructions: str, style_preset: str) -> str:
             "- ラフな矢印・囲み・吹き出し\n"
             "- TED チャンネル・Sketchnoting のような図解"
         ),
+        "soviet_propaganda": (
+            "【スタイル: ソ連プロパガンダ風（深層プロンプティング・モード）】\n"
+            "世界観: 1920-1950年代モスクワ印刷工場、教育省発行ポスター。"
+            "Constructivism + Socialist Realism のハイブリッド。MoMA/テート・モダン展示級の傑作。\n"
+            "【プロンプトに必ず織り込む固定要素】\n"
+            "- 3色厳守: 深い赤(#8B0000-#A6192E、低彩度) / 純黒(#1A1A1A) / 肌色オフホワイト(#E8D5B7-#F0E0CC)\n"
+            "- フラット塗り、グラデなし\n"
+            "- 低視点、対角線構図、英雄的シルエット\n"
+            "- リトグラフ印刷の質感、紙の老化感\n"
+            "- テキストの後ろにわずかに傾いた赤/黒の角丸帯\n"
+            "- 参照精神: Rodchenko / Lissitzky / Mayakovsky / Toidze / Klimashin / Pravda新聞・Krokodil雑誌の挿絵\n"
+            "【教育チャンネル文脈の調整（最重要）】\n"
+            "- 武器ではなく、書物・地球儀・分析装置・建築 をシンボルに使う\n"
+            "- 「歴史的スタイルの再現」という立ち位置\n"
+            "【絶対禁止】4色以上 / 高彩度の原色赤 / 暴力・武器・ハンマー&鎌・赤い星 / "
+            "アニメ調 / 現代写実 / 可愛い系 / カラーコードの画像内表示 / 笑顔・親しみやすさ\n"
+            "【生成方針】センテンスの内容を上記固定要素に統合し、200〜400字相当の濃密な英文プロンプトにすること。"
+            "被写体（人物・概念）は英雄的シルエットや象徴物（書物・地球儀・建築）で表現する。"
+        ),
     }
     blocks.append(style_descriptions.get(style_preset, style_descriptions["flat_infographic"]))
     return "\n\n".join(blocks)

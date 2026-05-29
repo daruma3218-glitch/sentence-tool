@@ -111,15 +111,36 @@ PROVIDER_GPT_IMAGE = "gpt-image"
 VALID_PROVIDERS = (PROVIDER_NANOBANANA, PROVIDER_GPT_IMAGE)
 
 
+# ソ連プロパガンダ風の固定スタイル仕様（強制プレフィックス）
+SOVIET_PROPAGANDA_STYLE = (
+    "Style: 1920s-1950s Soviet propaganda poster (Moscow print factory, ministry of education). "
+    "Constructivism + Socialist Realism hybrid, museum-quality (MoMA / Tate Modern level). "
+    "STRICT 3-COLOR PALETTE ONLY: deep desaturated red (#8B0000 to #A6192E), pure black (#1A1A1A), "
+    "skin-tone off-white (#E8D5B7 to #F0E0CC). Use NO other colors. "
+    "Flat color fills, absolutely NO gradients. "
+    "Low camera angle, strong diagonal composition, heroic silhouettes. "
+    "Lithograph print texture with aged-paper feel. "
+    "Place any text on a slightly tilted red or black rounded-corner band. "
+    "Inspired by Rodchenko, Lissitzky, Mayakovsky, Toidze, Klimashin, and Pravda / Krokodil illustrations. "
+    "Educational-channel adaptation: use BOOKS, GLOBES, analytical instruments, and ARCHITECTURE "
+    "as the heroic symbols — NEVER weapons. This is a respectful reproduction of a historical art style. "
+    "STRICTLY FORBIDDEN: more than 3 colors, bright saturated primary red, any violence, weapons, "
+    "hammer-and-sickle, red star, anime style, modern photorealism, cute style, smiling faces, "
+    "friendliness, and showing any color codes / hex text inside the image. "
+)
+
+
 def _build_full_prompt(
     user_prompt: str,
     prompt_type: str = "illustration",
     allowed_terms: Optional[list] = None,
+    style_preset: str = "",
 ) -> str:
     """画像生成用のシステム接頭辞を付与
 
     allowed_terms には「画像内に入れて良い日本語の語句」のホワイトリストを渡す。
     リストに無い文字・ラベル・数値はすべて画像から除外するよう AI に厳格指示する。
+    style_preset == "soviet_propaganda" の場合は固定のプロパガンダ様式を強制する。
     """
     style_hints = {
         "illustration": (
@@ -138,7 +159,11 @@ def _build_full_prompt(
             "Style: clean chart (bar / pie / line graph) with 3-5 data elements. "
         ),
     }
-    style = style_hints.get(prompt_type, style_hints["illustration"])
+    # プロパガンダ風が選択されている場合は type 別ヒントを上書き
+    if style_preset == "soviet_propaganda":
+        style = SOVIET_PROPAGANDA_STYLE
+    else:
+        style = style_hints.get(prompt_type, style_hints["illustration"])
 
     # 画像内テキストのホワイトリスト指示（最重要）
     terms = [t for t in (allowed_terms or []) if isinstance(t, str) and t.strip()]
@@ -308,6 +333,7 @@ class ParallelImageGenerator:
         openai_quality: str = "medium",
         openai_size: str = "1536x1024",
         concurrency: int = DEFAULT_CONCURRENCY,
+        style_preset: str = "",
         progress_callback: Optional[Callable[[dict], None]] = None,
     ):
         if provider not in VALID_PROVIDERS:
@@ -315,6 +341,7 @@ class ParallelImageGenerator:
         self.provider = provider
         self.openai_quality = openai_quality
         self.openai_size = openai_size
+        self.style_preset = style_preset
 
         # クライアント初期化（必要な分だけ）
         self.gemini_client = None
@@ -381,7 +408,7 @@ class ParallelImageGenerator:
                 "provider": self.provider,
             })
 
-            full_prompt = _build_full_prompt(prompt_text, prompt_type, allowed_terms=allowed_terms)
+            full_prompt = _build_full_prompt(prompt_text, prompt_type, allowed_terms=allowed_terms, style_preset=self.style_preset)
             loop = asyncio.get_running_loop()
 
             try:
@@ -461,6 +488,7 @@ def run_parallel_generation(
     openai_quality: str = "medium",
     openai_size: str = "1536x1024",
     concurrency: int = DEFAULT_CONCURRENCY,
+    style_preset: str = "",
     progress_callback: Optional[Callable[[dict], None]] = None,
 ) -> list:
     """同期エントリポイント: pipeline から呼び出す"""
@@ -483,6 +511,7 @@ def run_parallel_generation(
         openai_quality=openai_quality,
         openai_size=openai_size,
         concurrency=concurrency,
+        style_preset=style_preset,
         progress_callback=progress_callback,
     )
     return asyncio.run(generator.generate_all(prompts, output_dir))

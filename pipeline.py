@@ -28,7 +28,7 @@ from generator import (
 )
 
 
-VALID_STYLES = ("flat_infographic", "pictogram", "comic", "whiteboard")
+VALID_STYLES = ("flat_infographic", "pictogram", "comic", "whiteboard", "soviet_propaganda")
 
 
 class SentencePipeline:
@@ -344,6 +344,7 @@ class SentencePipeline:
             openai_api_key=openai_key,
             openai_quality=self.openai_quality,
             concurrency=self.concurrency,
+            style_preset=self.style_preset,
             progress_callback=on_item_event,
         )
 
