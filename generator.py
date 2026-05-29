@@ -35,12 +35,41 @@ MAX_RETRIES = 3
 TARGET_RATIO = 16 / 9
 
 
+def _detect_background_color(img: "Image.Image") -> tuple:
+    """画像の四隅から背景色を推定する（最頻色）。図解の余白色になじませる用。"""
+    w, h = img.size
+    # 四隅 + 各辺中央の計 8 点をサンプリング
+    points = [
+        (1, 1), (w - 2, 1), (1, h - 2), (w - 2, h - 2),
+        (w // 2, 1), (w // 2, h - 2), (1, h // 2), (w - 2, h // 2),
+    ]
+    samples = []
+    px = img.load()
+    for x, y in points:
+        try:
+            c = px[x, y]
+            if isinstance(c, int):  # グレースケール
+                c = (c, c, c)
+            samples.append(c[:3])
+        except Exception:
+            pass
+    if not samples:
+        return (255, 255, 255)
+    # 最頻色を返す
+    from collections import Counter
+    most_common = Counter(samples).most_common(1)[0][0]
+    return most_common
+
+
 def _save_as_16_9(image_bytes: bytes, output_path: Path) -> None:
-    """画像バイト列を中央クロップして 16:9 で保存する。
+    """画像バイト列を 16:9 で保存する（レターボックス方式）。
+
+    クロップせず画像全体を 16:9 フレーム内に収め、はみ出さないようにする。
+    余白は四隅から検出した背景色で埋めるので、図解の端が欠けない。
 
     - 既に 16:9 ならそのまま保存
-    - 横長すぎ（例 OpenAI 3:2）→ 左右をクロップ
-    - 縦長すぎ → 上下をクロップ
+    - 横長すぎ（例 OpenAI 3:2）→ 上下に余白を足す
+    - 縦長すぎ → 左右に余白を足す
     """
     img = Image.open(BytesIO(image_bytes))
     if img.mode not in ("RGB", "RGBA"):
@@ -49,22 +78,32 @@ def _save_as_16_9(image_bytes: bytes, output_path: Path) -> None:
     current = w / h if h else 1.0
 
     if abs(current - TARGET_RATIO) < 0.01:
-        # 既にほぼ 16:9
+        # 既にほぼ 16:9 → そのまま
         img.save(output_path, format="PNG")
         return
 
-    if current > TARGET_RATIO:
-        # 横長すぎ → 左右をクロップ
-        new_w = int(round(h * TARGET_RATIO))
-        left = (w - new_w) // 2
-        img = img.crop((left, 0, left + new_w, h))
-    else:
-        # 縦長すぎ → 上下をクロップ
-        new_h = int(round(w / TARGET_RATIO))
-        top = (h - new_h) // 2
-        img = img.crop((0, top, w, top + new_h))
+    # 背景色を検出（余白に使う）
+    bg = _detect_background_color(img)
 
-    img.save(output_path, format="PNG")
+    if current > TARGET_RATIO:
+        # 横長すぎ → 幅基準でキャンバスを作り、上下に余白
+        canvas_w = w
+        canvas_h = int(round(w / TARGET_RATIO))
+    else:
+        # 縦長すぎ → 高さ基準でキャンバスを作り、左右に余白
+        canvas_h = h
+        canvas_w = int(round(h * TARGET_RATIO))
+
+    # 16:9 キャンバスを背景色で作成し、元画像を中央に配置（縮小なし＝全体保持）
+    canvas = Image.new("RGB", (canvas_w, canvas_h), bg)
+    offset_x = (canvas_w - w) // 2
+    offset_y = (canvas_h - h) // 2
+    if img.mode == "RGBA":
+        canvas.paste(img, (offset_x, offset_y), img)
+    else:
+        canvas.paste(img, (offset_x, offset_y))
+
+    canvas.save(output_path, format="PNG")
 
 # プロバイダ識別子
 PROVIDER_NANOBANANA = "nanobanana"
@@ -125,7 +164,12 @@ def _build_full_prompt(
 
     common = (
         "OTHER REQUIREMENTS:\n"
-        "- 16:9 landscape aspect ratio for video presentation.\n"
+        "- 16:9 landscape aspect ratio for video presentation (WIDE, not square, not tall).\n"
+        "- COMPOSITION (CRITICAL): The ENTIRE subject/diagram/figure MUST be fully visible inside the frame.\n"
+        "  Keep a generous safe margin (at least 10% padding) around all edges.\n"
+        "  Do NOT let any part of the figure, text, icon, or chart touch or extend beyond the edges.\n"
+        "  Zoom out / use a wider view so nothing is cropped or cut off.\n"
+        "- Center the main content with comfortable empty space around it.\n"
         "- Simple, clear, professional. Avoid clutter.\n"
     )
     return f"{style}\n{text_policy}{common}\nContent to visualize:\n{user_prompt}"
