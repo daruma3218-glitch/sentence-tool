@@ -148,8 +148,16 @@ def _build_full_prompt(
             "(watercolor, flat, line art, paper-cut, 3D rendered, comic, or minimal). "
         ),
         "map": (
-            "Style: aerial photograph / satellite imagery style map. "
-            "Show geographical features clearly. "
+            "Style: PHOTOREALISTIC satellite / aerial map, like NASA Blue Marble, "
+            "Google Earth, or National Geographic cartography. "
+            "Real-looking Earth surface seen from above: accurate natural colors "
+            "(deep blue oceans, green forests, brown/tan deserts and mountains, "
+            "white snow and ice, realistic coastlines and rivers). "
+            "Add subtle relief shading and terrain texture for a 3D sense of landforms. "
+            "Render country/region borders as thin clean lines and shade relevant "
+            "territories with semi-transparent color overlays so they stand out. "
+            "Professional, high-resolution, documentary-quality geographic map. "
+            "NOT a flat cartoon, NOT a simplified illustration — make it look like a real map. "
         ),
         "diagram": (
             "Style: clean conceptual diagram with arrows and 3-5 boxes. "
