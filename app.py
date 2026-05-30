@@ -132,14 +132,14 @@ def _add_log(job_id: str, category: str, message: str, detail: str = ""):
 def _run_pipeline_thread(job_id: str, manuscript_text: str, user_instructions: str,
                          concurrency: int, provider: str, openai_quality: str,
                          skip_decorative: bool, style_preset: str,
-                         web_image_count: int, max_diagrams: int):
+                         web_image_count: int, max_diagrams: int, route_mode: str):
     job_dir = OUTPUT_DIR / job_id
     provider_label = ("nanobanana (Gemini)" if provider == PROVIDER_NANOBANANA
                       else f"gpt-image ({openai_quality})")
     try:
         _set_job_state(job_id, status="running", phase=0, message="開始しています...", percent=0)
         _add_log(job_id, "system",
-                 f"ジョブ {job_id} を開始（{provider_label} / 並列 {concurrency} / style={style_preset} / Web画像 {web_image_count}）")
+                 f"ジョブ {job_id} を開始（{provider_label} / 並列 {concurrency} / style={style_preset} / route={route_mode} / Web画像 {web_image_count}）")
 
         def on_progress(phase, msg, pct):
             _set_job_state(job_id, status="running", phase=phase, message=msg, percent=pct)
@@ -161,6 +161,7 @@ def _run_pipeline_thread(job_id: str, manuscript_text: str, user_instructions: s
             skip_decorative=skip_decorative,
             web_image_count=web_image_count,
             max_diagrams=max_diagrams,
+            route_mode=route_mode,
             progress_callback=on_progress,
             log_callback=on_log,
             item_callback=on_item,
@@ -229,6 +230,9 @@ def start_job():
     style_preset = request.form.get("style_preset", "flat_infographic")
     if style_preset not in VALID_STYLES:
         style_preset = "flat_infographic"
+    route_mode = request.form.get("route_mode", "auto")
+    if route_mode not in ("auto", "all_ai"):
+        route_mode = "auto"
     try:
         web_image_count = int(request.form.get("web_image_count", "0"))
     except ValueError:

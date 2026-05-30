@@ -208,6 +208,27 @@
             </div>
           </div>
 
+          <!-- 画像ソースモード（ルーター） -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">画像ソースの決め方</label>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <label class="cursor-pointer">
+                <input type="radio" name="route_mode" value="auto" class="peer sr-only" checked>
+                <div class="px-4 py-3 bg-white border-2 border-gray-200 rounded-lg text-xs peer-checked:border-emerald-500 peer-checked:bg-emerald-50 transition">
+                  <div class="font-semibold text-gray-800 mb-0.5">🤖 ルーター自動振り分け（推奨）</div>
+                  <div class="text-gray-500 leading-snug">各文を AI が判定。歴史人物→Web写真、地理→地図、概念→図解、数値→グラフ、繋ぎ→スキップ。</div>
+                </div>
+              </label>
+              <label class="cursor-pointer">
+                <input type="radio" name="route_mode" value="all_ai" class="peer sr-only">
+                <div class="px-4 py-3 bg-white border-2 border-gray-200 rounded-lg text-xs peer-checked:border-emerald-500 peer-checked:bg-emerald-50 transition">
+                  <div class="font-semibold text-gray-800 mb-0.5">🎨 全文 AI 生成（v1 互換）</div>
+                  <div class="text-gray-500 leading-snug">全センテンスを AI 画像化。Web 写真は下の「Web画像URL取得」枚数ぶん別途取得。</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
           <!-- パラメータ：並列度 + 最大枚数 + Web画像 -->
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div class="bg-white rounded-xl border border-gray-200 p-4">

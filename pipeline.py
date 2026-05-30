@@ -18,7 +18,8 @@ from typing import Callable, Optional
 from utils import get_anthropic_client, save_json, load_json
 from splitter import split_manuscript
 from prompter import generate_all_prompts
-from web_searcher import run_web_search
+from web_searcher import run_web_search, run_web_search_for_selections
+from router import route_all_sentences, AI_ROUTES
 from generator import (
     run_parallel_generation,
     DEFAULT_CONCURRENCY,
@@ -29,6 +30,7 @@ from generator import (
 
 
 VALID_STYLES = ("flat_infographic", "pictogram", "comic", "whiteboard", "soviet_propaganda")
+VALID_ROUTE_MODES = ("auto", "all_ai")
 
 
 class SentencePipeline:
@@ -46,6 +48,7 @@ class SentencePipeline:
         skip_decorative: bool = False,
         web_image_count: int = 0,
         max_diagrams: int = 150,
+        route_mode: str = "auto",
         progress_callback: Optional[Callable] = None,
         log_callback: Optional[Callable] = None,
         item_callback: Optional[Callable] = None,
@@ -60,6 +63,7 @@ class SentencePipeline:
         self.skip_decorative = skip_decorative
         self.web_image_count = max(0, min(web_image_count, 200))
         self.max_diagrams = max(1, min(max_diagrams, 300))
+        self.route_mode = route_mode if route_mode in VALID_ROUTE_MODES else "auto"
         self.progress_callback = progress_callback or (lambda phase, msg, pct: None)
         self.log_callback = log_callback or (lambda *a, **kw: None)
         self.item_callback = item_callback or (lambda info: None)
@@ -194,6 +198,8 @@ class SentencePipeline:
                     "prompt": "",
                     "allowed_terms": [],
                     "type": "",
+                    "route": "",
+                    "route_reason": "",
                     "web_source_url": "",
                     "web_thumb_url": "",
                     "web_topic": "",
@@ -201,12 +207,45 @@ class SentencePipeline:
         self._dump_snapshot()
         self._progress(1, f"分解完了: {total_sentences} センテンス検出", 15)
 
-        # ===== Phase 2a: 英文プロンプト =====
-        self._progress(2, f"英文プロンプトを並列生成中（style={self.style_preset}）...", 18)
-        self._log("prompter", f"{total_sentences} センテンスのプロンプトを生成します")
+        # ===== Phase 2-router: 各文のソースを判定 =====
+        if self.route_mode == "auto":
+            self._progress(2, "各文のソースを判定中（ルーター）...", 16)
+            self._log("router", "ルーターが各文の最適なソースを判定します")
+            routes = route_all_sentences(
+                client, rows, title,
+                user_instructions=self.user_instructions,
+                max_workers=4, log=self._log,
+            )
+        else:  # all_ai: v1 互換（全文 AI 生成）
+            self._log("router", "route_mode=all_ai: 全文を AI 生成に回します")
+            routes = {
+                r["no"]: {"route": "illustration", "reason": "all_ai モード", "search_query": "", "topic": ""}
+                for r in rows
+            }
+        save_json(self.output_dir / "routes.json", routes)
+
+        # route を各行に反映
+        for no, rt in routes.items():
+            self._update_row(no, route=rt.get("route", "illustration"), route_reason=rt.get("reason", ""))
+
+        # route で 3 分類
+        web_photo_rows = [r for r in rows if routes.get(r["no"], {}).get("route") == "web_photo"]
+        ai_rows = [r for r in rows if routes.get(r["no"], {}).get("route") in AI_ROUTES]
+        skip_rows = [r for r in rows if routes.get(r["no"], {}).get("route") == "skip"]
+
+        # skip 文をマーク
+        for r in skip_rows:
+            self._update_row(r["no"], status="skipped")
+
+        self._log("router",
+                  f"振り分け: AI生成 {len(ai_rows)} / Web写真 {len(web_photo_rows)} / skip {len(skip_rows)}")
+
+        # ===== Phase 2a: 英文プロンプト（AI 行のみ） =====
+        self._progress(2, f"英文プロンプトを並列生成中（style={self.style_preset}）...", 22)
+        self._log("prompter", f"{len(ai_rows)} 件（AI生成対象）のプロンプトを生成します")
         rows_with_prompts = generate_all_prompts(
             client,
-            rows,
+            ai_rows,
             title=title,
             user_instructions=self.user_instructions,
             style_preset=self.style_preset,
@@ -225,57 +264,82 @@ class SentencePipeline:
             )
         self._progress(2, "プロンプト生成完了", 35)
 
-        # ===== Phase 2b: Web 画像 URL 取得（オプション・並列実行） =====
-        # 部分結果を保持する dict（タイムアウト時にも参照できる）
+        # ===== Phase 2b: Web 画像 URL 取得（並列実行） =====
+        # 部分結果を保持する list（タイムアウト時にも参照できる）
         web_results_accumulator: list = []
 
+        def _web_on_item(info):
+            web_results_accumulator.append(info)
+            self._update_row(
+                info["no"],
+                web_source_url=info.get("source_url", ""),
+                web_thumb_url=info.get("thumb_url", ""),
+                web_topic=info.get("topic", ""),
+                web_source_title=info.get("source_title", ""),
+            )
+            try:
+                save_json(
+                    self.output_dir / "web_results.json",
+                    {"items": list(web_results_accumulator)},
+                )
+            except Exception:
+                pass
+
+        def _web_save_final():
+            try:
+                save_json(
+                    self.output_dir / "web_results.json",
+                    {"items": list(web_results_accumulator)},
+                )
+            except Exception:
+                pass
+
         web_thread = None
-        if self.web_image_count > 0:
+
+        if self.route_mode == "auto" and web_photo_rows:
+            # ルーターが web_photo に振った文を検索（選定済み）
+            selections = []
+            for r in web_photo_rows:
+                rt = routes.get(r["no"], {})
+                selections.append({
+                    "no": r["no"],
+                    "query": rt.get("search_query") or r.get("sentence", "")[:30],
+                    "topic": rt.get("topic") or r.get("sentence", "")[:20],
+                })
             self._log("websearch",
-                      f"Web 画像取得を並列起動: 目標 {self.web_image_count} 件（同時 8 並列）")
+                      f"Web 画像取得を並列起動: {len(selections)} 件（ルーター選定・同時 8 並列）")
 
-            def web_task():
-                """run_web_search を呼ぶ。例外でも部分結果は accumulator に残る"""
-                def on_item(info):
-                    # 累積に追加（dedupe 不要、item_callback とは別ルート）
-                    web_results_accumulator.append(info)
-                    self._update_row(
-                        info["no"],
-                        web_source_url=info.get("source_url", ""),
-                        web_thumb_url=info.get("thumb_url", ""),
-                        web_topic=info.get("topic", ""),
-                        web_source_title=info.get("source_title", ""),
-                    )
-                    # 部分結果をその都度保存（タイムアウトしても残る）
-                    try:
-                        save_json(
-                            self.output_dir / "web_results.json",
-                            {"items": list(web_results_accumulator)},
-                        )
-                    except Exception:
-                        pass
-
+            def web_task_auto():
                 try:
-                    run_web_search(
-                        client,
-                        rows_with_prompts,
-                        target_count=self.web_image_count,
-                        max_workers=8,  # 4 → 8 に増強（I/O bound なので問題なし）
-                        log=self._log,
-                        item_callback=on_item,
+                    run_web_search_for_selections(
+                        client, selections, max_workers=8,
+                        log=self._log, item_callback=_web_on_item,
                     )
                 except Exception as e:
                     self._log("error", f"Web 画像取得失敗: {str(e)[:120]}")
-                # 最終保存
-                try:
-                    save_json(
-                        self.output_dir / "web_results.json",
-                        {"items": list(web_results_accumulator)},
-                    )
-                except Exception:
-                    pass
+                _web_save_final()
 
-            web_thread = threading.Thread(target=web_task, daemon=True)
+            web_thread = threading.Thread(target=web_task_auto, daemon=True)
+
+        elif self.route_mode == "all_ai" and self.web_image_count > 0:
+            # v1 互換: web_image_count で内部選定
+            self._log("websearch",
+                      f"Web 画像取得を並列起動: 目標 {self.web_image_count} 件（v1 選定・同時 8 並列）")
+
+            def web_task_v1():
+                try:
+                    run_web_search(
+                        client, rows_with_prompts,
+                        target_count=self.web_image_count, max_workers=8,
+                        log=self._log, item_callback=_web_on_item,
+                    )
+                except Exception as e:
+                    self._log("error", f"Web 画像取得失敗: {str(e)[:120]}")
+                _web_save_final()
+
+            web_thread = threading.Thread(target=web_task_v1, daemon=True)
+
+        if web_thread:
             web_thread.start()
 
         # ===== Phase 3: 画像生成（全文均等配置で選定） =====
@@ -387,10 +451,14 @@ class SentencePipeline:
             "provider": self.provider,
             "openai_quality": self.openai_quality if self.provider == PROVIDER_GPT_IMAGE else None,
             "style_preset": self.style_preset,
+            "route_mode": self.route_mode,
             "concurrency": self.concurrency,
             "total_sentences": total_sentences,
             "max_diagrams": self.max_diagrams,
             "web_image_count": self.web_image_count,
+            "ai_route_count": len(ai_rows),
+            "web_photo_count": len(web_photo_rows),
+            "skip_route_count": len(skip_rows),
             "generated": success_count,
             "failed": fail_count,
             "skipped_decorative": skipped_decorative,
@@ -408,11 +476,22 @@ class SentencePipeline:
         self._progress(4, f"完了: 図解 {success_count} / Web {web_count_final} / 全 {total_sentences} 文", 100)
         return manifest
 
+    # ルート → 日本語ラベル
+    ROUTE_LABELS = {
+        "web_photo": "Web写真",
+        "map": "地図",
+        "diagram": "図解",
+        "chart": "グラフ",
+        "illustration": "イラスト",
+        "skip": "スキップ",
+        "": "",
+    }
+
     def _write_csv(self, path: Path, rows: list):
         """CSV を書き出す（スプレッドシートと同構造）"""
         with path.open("w", encoding="utf-8-sig", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["章", "ブロック", "センテンス", "№", "画像", "URL", "Web トピック"])
+            w.writerow(["章", "ブロック", "センテンス", "№", "ソース", "画像", "URL", "Web トピック"])
             for r in rows:
                 block_text = ""
                 if r.get("sentence_index") == 0:
@@ -420,11 +499,13 @@ class SentencePipeline:
                 chapter = ""
                 if r.get("block_index") == 0 and r.get("sentence_index") == 0:
                     chapter = r.get("chapter_title", "")
+                route_label = self.ROUTE_LABELS.get(r.get("route", ""), r.get("route", ""))
                 w.writerow([
                     chapter,
                     block_text,
                     r.get("sentence", ""),
                     r.get("no", ""),
+                    route_label,
                     r.get("filename", "") or "",
                     r.get("web_source_url", "") or "",
                     r.get("web_topic", "") or "",

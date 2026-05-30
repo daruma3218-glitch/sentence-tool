@@ -309,6 +309,49 @@ def search_single_sentence(
     }
 
 
+def run_web_search_for_selections(
+    client: anthropic.Anthropic,
+    selections: list,
+    max_workers: int = 8,
+    log: Optional[Callable] = None,
+    item_callback: Optional[Callable] = None,
+) -> list:
+    """v2 用: ルーターが選んだ web_photo 文を検索する（選定ステップなし）。
+
+    selections: [{"no": int, "query": str, "topic": str}, ...]
+        ルーターの search_query / topic をそのまま使うので、ここでは選定しない。
+    """
+    log = log or (lambda *a, **kw: None)
+    item_callback = item_callback or (lambda info: None)
+
+    if not selections:
+        log("websearch", "Web 検索対象（web_photo）がありません")
+        return []
+
+    log("websearch", f"{len(selections)} 件の Web 検索を並列実行中（同時 {max_workers}）...")
+    results = []
+    completed = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_sel = {
+            executor.submit(search_single_sentence, client, sel): sel
+            for sel in selections
+        }
+        for future in as_completed(future_to_sel):
+            sel = future_to_sel[future]
+            try:
+                r = future.result()
+                results.append(r)
+                completed += 1
+                log("websearch", f"検索 {completed}/{len(selections)}: 「{r.get('topic', '')[:30]}」")
+                item_callback(r)
+            except Exception as e:
+                log("error", f"検索エラー（no={sel.get('no')}）: {str(e)[:100]}")
+
+    results.sort(key=lambda x: x.get("no", 0))
+    log("websearch", f"Web 検索完了: {len(results)} 件")
+    return results
+
+
 def run_web_search(
     client: anthropic.Anthropic,
     rows: list,
@@ -317,7 +360,7 @@ def run_web_search(
     log: Optional[Callable] = None,
     item_callback: Optional[Callable] = None,
 ) -> list:
-    """エントリポイント: Web 画像 URL を取得して返す
+    """エントリポイント: Web 画像 URL を取得して返す（v1 互換: 内部で選定する）
 
     戻り値:
       [
