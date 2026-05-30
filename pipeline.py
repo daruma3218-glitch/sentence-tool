@@ -245,17 +245,36 @@ class SentencePipeline:
                   f"振り分け: AI生成 {len(ai_rows)} / Web写真 {len(web_photo_rows)} / skip {len(skip_rows)}")
 
         # ===== Phase 2a: 英文プロンプト（AI 行のみ） =====
+        # プロパガンダ・ミックス時は、昇格文を「プロパガンダのプロンプト」で別生成する
+        # （base スタイルで作ると "flat infographic, navy blue" 等が本文に残り、
+        #   generator のプロパガンダ指定を打ち消してしまうため）
         self._progress(2, f"英文プロンプトを並列生成中（style={self.style_preset}）...", 22)
-        self._log("prompter", f"{len(ai_rows)} 件（AI生成対象）のプロンプトを生成します")
-        rows_with_prompts = generate_all_prompts(
-            client,
-            ai_rows,
-            title=title,
-            user_instructions=self.user_instructions,
-            style_preset=self.style_preset,
-            max_workers=6,
-            log=self._log,
-        )
+        if self.propaganda_mix:
+            prop_rows = [r for r in ai_rows if routes.get(r["no"], {}).get("propaganda")]
+            base_rows = [r for r in ai_rows if not routes.get(r["no"], {}).get("propaganda")]
+            self._log("prompter",
+                      f"プロンプト生成: 通常 {len(base_rows)} 件 + プロパガンダ {len(prop_rows)} 件")
+            rows_with_prompts = []
+            if base_rows:
+                rows_with_prompts += generate_all_prompts(
+                    client, base_rows, title=title,
+                    user_instructions=self.user_instructions,
+                    style_preset=self.style_preset, max_workers=6, log=self._log,
+                )
+            if prop_rows:
+                rows_with_prompts += generate_all_prompts(
+                    client, prop_rows, title=title,
+                    user_instructions=self.user_instructions,
+                    style_preset="soviet_propaganda", max_workers=6, log=self._log,
+                )
+            rows_with_prompts.sort(key=lambda x: x.get("no", 0))
+        else:
+            self._log("prompter", f"{len(ai_rows)} 件（AI生成対象）のプロンプトを生成します")
+            rows_with_prompts = generate_all_prompts(
+                client, ai_rows, title=title,
+                user_instructions=self.user_instructions,
+                style_preset=self.style_preset, max_workers=6, log=self._log,
+            )
         save_json(self.output_dir / "prompts.json", {"rows": rows_with_prompts})
         self._log("prompter", f"プロンプト生成完了: {len(rows_with_prompts)} 件")
 
@@ -274,10 +293,19 @@ class SentencePipeline:
 
         def _web_on_item(info):
             web_results_accumulator.append(info)
+            # サムネをローカルに DL して実画像として表示・ZIP 同梱できるようにする
+            from web_searcher import download_thumbnail
+            local_file = ""
+            thumb_url = info.get("thumb_url", "")
+            if thumb_url:
+                fname = f"web_{info['no']:03d}.jpg"
+                if download_thumbnail(thumb_url, self.images_dir / fname):
+                    local_file = fname
             self._update_row(
                 info["no"],
                 web_source_url=info.get("source_url", ""),
                 web_thumb_url=info.get("thumb_url", ""),
+                web_local_file=local_file,
                 web_topic=info.get("topic", ""),
                 web_source_title=info.get("source_title", ""),
             )

@@ -254,6 +254,33 @@ def select_search_worthy_sentences(
     return all_valid[:target_count]
 
 
+def download_thumbnail(thumb_url: str, output_path) -> bool:
+    """Wikimedia 等のサムネイル画像をローカルに保存する。
+
+    参考用の低解像度サムネイル（Wikimedia Commons は大半が CC/PD）を
+    動画素材の下調べ用にダウンロードする。失敗しても致命的ではない。
+    """
+    from pathlib import Path
+    if not thumb_url:
+        return False
+    output_path = Path(output_path)
+    try:
+        req = urllib.request.Request(
+            thumb_url,
+            headers={"User-Agent": "sentence-tool/1.0 (educational video material research)"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = resp.read()
+        if not data or len(data) < 200:  # 壊れた応答
+            return False
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(data)
+        return True
+    except Exception as e:
+        print(f"  [thumb download ERROR] {str(e)[:100]}", flush=True)
+        return False
+
+
 def search_single_sentence(
     client: anthropic.Anthropic,
     selection: dict,

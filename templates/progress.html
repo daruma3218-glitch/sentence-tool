@@ -254,12 +254,15 @@
     }
 
     function webCellHtml(row) {
-      const thumb = row.web_thumb_url || '';
+      const local = row.web_local_file || '';      // DL 済みのローカル実画像
+      const thumb = row.web_thumb_url || '';        // リモートサムネ（フォールバック）
       const src = row.web_source_url || '';
       const topic = row.web_topic || '';
       if (!src) return `<div class="text-gray-300 text-[10px] text-center">―</div>`;
-      const thumbHtml = thumb
-        ? `<img src="${escapeHtml(thumb)}" class="thumb-img" alt="" loading="lazy" onerror="this.style.display='none'">`
+      // ローカル DL 画像があればそれを優先（確実に表示・ZIP同梱）、なければリモートサムネ
+      const imgSrc = local ? `/results/${JOB_ID}/images/${local}` : (thumb ? escapeHtml(thumb) : '');
+      const thumbHtml = imgSrc
+        ? `<img src="${imgSrc}" class="thumb-img pop-in" alt="" loading="lazy" onerror="this.style.display='none'">`
         : `<div class="w-20 h-[45px] bg-purple-50 rounded flex items-center justify-center mx-auto"><svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"/></svg></div>`;
       return `
         <a href="${escapeHtml(src)}" target="_blank" rel="noopener" class="block hover:opacity-80" title="${escapeHtml(topic)}: ${escapeHtml(src)}">
