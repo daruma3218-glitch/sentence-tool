@@ -279,6 +279,16 @@
             </label>
           </div>
 
+          <div class="bg-white rounded-xl border border-red-200 p-4">
+            <label class="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" name="propaganda_mix" class="mt-1 w-4 h-4 text-red-700 rounded">
+              <div>
+                <span class="text-sm font-medium text-gray-700 block">⭐ プロパガンダ・ミックス（文ごとに様式判定）</span>
+                <span class="text-xs text-gray-400">歴史的転換点・権力者・思想対立などドラマチックな文だけ自動でソ連プロパガンダ風に。通常の文は上で選んだスタイルのまま。<strong>※スタイルが「ソ連プロパガンダ風」のときは無効（全部プロパガンダになるため）</strong></span>
+              </div>
+            </label>
+          </div>
+
           <button type="submit" id="submitBtn"
                   class="w-full py-4 bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-bold rounded-xl hover:from-cyan-700 hover:to-blue-700 transition shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
             <span id="submitText">原稿を分解して図解を一括生成</span>

@@ -49,6 +49,7 @@ class SentencePipeline:
         web_image_count: int = 0,
         max_diagrams: int = 150,
         route_mode: str = "auto",
+        propaganda_mix: bool = False,
         progress_callback: Optional[Callable] = None,
         log_callback: Optional[Callable] = None,
         item_callback: Optional[Callable] = None,
@@ -64,6 +65,8 @@ class SentencePipeline:
         self.web_image_count = max(0, min(web_image_count, 200))
         self.max_diagrams = max(1, min(max_diagrams, 300))
         self.route_mode = route_mode if route_mode in VALID_ROUTE_MODES else "auto"
+        # プロパガンダ・ミックス: base が propaganda 以外のときだけ有効
+        self.propaganda_mix = bool(propaganda_mix) and self.style_preset != "soviet_propaganda"
         self.progress_callback = progress_callback or (lambda phase, msg, pct: None)
         self.log_callback = log_callback or (lambda *a, **kw: None)
         self.item_callback = item_callback or (lambda info: None)
@@ -214,12 +217,13 @@ class SentencePipeline:
             routes = route_all_sentences(
                 client, rows, title,
                 user_instructions=self.user_instructions,
+                propaganda_mix=self.propaganda_mix,
                 max_workers=4, log=self._log,
             )
         else:  # all_ai: v1 互換（全文 AI 生成）
             self._log("router", "route_mode=all_ai: 全文を AI 生成に回します")
             routes = {
-                r["no"]: {"route": "illustration", "reason": "all_ai モード", "search_query": "", "topic": ""}
+                r["no"]: {"route": "illustration", "reason": "all_ai モード", "search_query": "", "topic": "", "propaganda": False}
                 for r in rows
             }
         save_json(self.output_dir / "routes.json", routes)
@@ -367,6 +371,11 @@ class SentencePipeline:
             if self.skip_decorative and r.get("type") == "decorative":
                 continue  # 既に skipped
             if no in selected_nos:
+                # プロパガンダ・ミックス: この文が昇格対象なら propaganda 様式を適用
+                row_style = self.style_preset
+                if self.propaganda_mix and routes.get(no, {}).get("propaganda"):
+                    row_style = "soviet_propaganda"
+                    self._update_row(no, propaganda=True)
                 generation_targets.append({
                     "index": no,
                     "prompt": r.get("prompt", ""),
@@ -375,6 +384,7 @@ class SentencePipeline:
                     "excerpt": r.get("sentence", ""),
                     "keypoint": r.get("sentence", "")[:30],
                     "allowed_terms": r.get("allowed_terms", []),
+                    "style": row_style,
                 })
             else:
                 # 候補だったが均等配置から外れた → 「間引き」

@@ -34,8 +34,13 @@ def _route_chunk(
     rows_chunk: list,
     title: str,
     user_instructions: str = "",
+    propaganda_mix: bool = False,
 ) -> list:
-    """1 チャンク（最大 CHUNK_SIZE 文）を route 分類する"""
+    """1 チャンク（最大 CHUNK_SIZE 文）を route 分類する。
+
+    propaganda_mix=True の場合、各文に propaganda (true/false) も付与する
+    （ドラマチック/歴史的/政治的に重い文だけプロパガンダ様式に昇格させるため）。
+    """
     inputs = [
         {
             "no": r["no"],
@@ -50,6 +55,19 @@ def _route_chunk(
     if user_instructions.strip():
         user_block = f"\n【ユーザーからの指示（最優先）】\n{user_instructions.strip()}\n"
 
+    propaganda_block = ""
+    propaganda_field = ""
+    if propaganda_mix:
+        propaganda_block = (
+            "\n【プロパガンダ判定（propaganda_mix モード）】\n"
+            "各文について、ソ連プロパガンダ風の様式が映えるかを propaganda(true/false) で判定すること:\n"
+            "- true: 歴史的転換点・権力者・イデオロギー・国家の興亡・思想対立・"
+            "ドラマチックで重い歴史的瞬間（例: 革命、粛清、冷戦、指導者の決断、帝国の崩壊）\n"
+            "- false: 中立的な説明・数値の解説・一般的な概念・軽い繋ぎ（通常様式のままが良い）\n"
+            "skip の文は propaganda=false でよい。\n"
+        )
+        propaganda_field = ',\n    "propaganda": true/false（上記基準で判定）'
+
     system = (
         "あなたは動画ディレクターです。原稿の各センテンスに、最適な画像ソースの種別（route）を"
         "1 つ割り当てます。結果は必ず JSON 配列のみで返してください。"
@@ -59,7 +77,7 @@ def _route_chunk(
 
 センテンス一覧:
 {inputs_json}
-{user_block}
+{user_block}{propaganda_block}
 
 【route の種別と判定基準】
 1. web_photo … 実在の歴史人物・事件・建造物・特定の場所で「本物の写真/絵画」が見たいもの
@@ -88,7 +106,7 @@ def _route_chunk(
     "route": "web_photo",
     "reason": "判定理由を15字以内で",
     "search_query": "Web検索クエリ（web_photoのときのみ、日本語30字以内、固有名詞を含む）",
-    "topic": "トピック名（web_photoのときのみ、10〜20字）"
+    "topic": "トピック名（web_photoのときのみ、10〜20字）"{propaganda_field}
   }},
   {{
     "no": 2,
@@ -109,24 +127,27 @@ def route_all_sentences(
     rows: list,
     title: str,
     user_instructions: str = "",
+    propaganda_mix: bool = False,
     max_workers: int = 4,
     log: Optional[Callable] = None,
 ) -> dict:
     """全センテンスを route 分類する。
 
-    戻り値: {no: {"route": str, "reason": str, "search_query": str, "topic": str}}
+    戻り値: {no: {"route", "reason", "search_query", "topic", "propaganda"}}
+    propaganda_mix=True のとき各文に propaganda(bool) が入る。
     """
     log = log or (lambda *a, **kw: None)
 
     # チャンク分割
     chunks = [rows[i:i + CHUNK_SIZE] for i in range(0, len(rows), CHUNK_SIZE)]
-    log("router", f"{len(rows)} 文を {len(chunks)} チャンクに分割して分類（同時 {max_workers} 並列）")
+    log("router", f"{len(rows)} 文を {len(chunks)} チャンクに分割して分類（同時 {max_workers} 並列）"
+                  + ("／プロパガンダ・ミックス ON" if propaganda_mix else ""))
 
     routes_by_no: dict = {}
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_idx = {
-            executor.submit(_route_chunk, client, chunk, title, user_instructions): i
+            executor.submit(_route_chunk, client, chunk, title, user_instructions, propaganda_mix): i
             for i, chunk in enumerate(chunks)
         }
         completed = 0
@@ -146,6 +167,7 @@ def route_all_sentences(
                         "reason": item.get("reason", ""),
                         "search_query": item.get("search_query", ""),
                         "topic": item.get("topic", ""),
+                        "propaganda": bool(item.get("propaganda", False)) if propaganda_mix else False,
                     }
                 completed += 1
                 log("router", f"チャンク {completed}/{len(chunks)} 分類完了")
@@ -161,12 +183,16 @@ def route_all_sentences(
                 "reason": "（自動フォールバック）",
                 "search_query": "",
                 "topic": "",
+                "propaganda": False,
             }
 
     # 集計ログ
     from collections import Counter
     counts = Counter(v["route"] for v in routes_by_no.values())
     summary = " / ".join(f"{k}:{counts.get(k, 0)}" for k in VALID_ROUTES)
+    if propaganda_mix:
+        prop_count = sum(1 for v in routes_by_no.values() if v.get("propaganda"))
+        summary += f"  [プロパガンダ昇格: {prop_count}]"
     log("router", f"分類結果: {summary}")
 
     return routes_by_no

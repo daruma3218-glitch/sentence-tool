@@ -395,6 +395,8 @@ class ParallelImageGenerator:
         excerpt = prompt_entry.get("excerpt", "")
         keypoint = prompt_entry.get("keypoint", "")
         allowed_terms = prompt_entry.get("allowed_terms", [])
+        # 行ごとのスタイル指定があればそれを優先（プロパガンダ・ミックス用）
+        row_style = prompt_entry.get("style") or self.style_preset
         filename = f"diagram_{idx:03d}.png"
         output_path = output_dir / filename
 
@@ -408,7 +410,7 @@ class ParallelImageGenerator:
                 "provider": self.provider,
             })
 
-            full_prompt = _build_full_prompt(prompt_text, prompt_type, allowed_terms=allowed_terms, style_preset=self.style_preset)
+            full_prompt = _build_full_prompt(prompt_text, prompt_type, allowed_terms=allowed_terms, style_preset=row_style)
             loop = asyncio.get_running_loop()
 
             try:

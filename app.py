@@ -132,7 +132,8 @@ def _add_log(job_id: str, category: str, message: str, detail: str = ""):
 def _run_pipeline_thread(job_id: str, manuscript_text: str, user_instructions: str,
                          concurrency: int, provider: str, openai_quality: str,
                          skip_decorative: bool, style_preset: str,
-                         web_image_count: int, max_diagrams: int, route_mode: str):
+                         web_image_count: int, max_diagrams: int, route_mode: str,
+                         propaganda_mix: bool = False):
     job_dir = OUTPUT_DIR / job_id
     provider_label = ("nanobanana (Gemini)" if provider == PROVIDER_NANOBANANA
                       else f"gpt-image ({openai_quality})")
@@ -162,6 +163,7 @@ def _run_pipeline_thread(job_id: str, manuscript_text: str, user_instructions: s
             web_image_count=web_image_count,
             max_diagrams=max_diagrams,
             route_mode=route_mode,
+            propaganda_mix=propaganda_mix,
             progress_callback=on_progress,
             log_callback=on_log,
             item_callback=on_item,
@@ -233,6 +235,7 @@ def start_job():
     route_mode = request.form.get("route_mode", "auto")
     if route_mode not in ("auto", "all_ai"):
         route_mode = "auto"
+    propaganda_mix = request.form.get("propaganda_mix", "off") == "on"
     try:
         web_image_count = int(request.form.get("web_image_count", "0"))
     except ValueError:
@@ -300,7 +303,7 @@ def start_job():
     thread = threading.Thread(
         target=_run_pipeline_thread,
         args=(job_id, manuscript_text, user_instructions, concurrency, provider, openai_quality,
-              skip_decorative, style_preset, web_image_count, max_diagrams),
+              skip_decorative, style_preset, web_image_count, max_diagrams, route_mode, propaganda_mix),
         daemon=True,
     )
     thread.start()
