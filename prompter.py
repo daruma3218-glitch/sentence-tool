@@ -121,12 +121,15 @@ def generate_prompts_batch(
     user_block = _build_user_block(user_instructions, style_preset)
 
     # Claude に渡す入力 + 自動抽出済み terms をヒントとして同梱
+    # 各行の route（ルーター判定）を type として固定で渡す
     inputs = []
     for r in rows_batch:
         sent = r.get("sentence", "")
         hints = _auto_extract_terms(sent)
+        row_type = r.get("route") or r.get("type") or "illustration"
         inputs.append({
             "no": r["no"],
+            "type": row_type,  # ★この type を厳守すること（変更禁止）
             "chapter": r.get("chapter_title", ""),
             "block_context": r.get("block_text", "")[:400],
             "sentence": sent,
@@ -135,25 +138,34 @@ def generate_prompts_batch(
     inputs_json = json.dumps(inputs, ensure_ascii=False, indent=2)
 
     system = (
-        "You are an infographic designer. You convert each Japanese sentence "
-        "from a video manuscript into a SIMPLE, CLEAR English image prompt "
-        "for a news-style flat infographic. Focus on clarity over drama. "
-        "Use icons, big numbers, and short labels. Avoid metaphors and allegory. "
+        "You are a visual director. You convert each Japanese sentence from a video "
+        "manuscript into a precise English image prompt. Each item has a fixed 'type' "
+        "you MUST honor: realphoto = a realistic documentary PHOTOGRAPH, map = a realistic "
+        "satellite/terrain MAP, and illustration/diagram/chart = the specified graphic style. "
         "Return only a JSON array. No markdown, no commentary."
     )
 
-    query = f"""動画原稿「{title}」の各センテンス（1文）に対応する**フラットインフォグラフィック**を作るための英文プロンプトを書いてください。
+    query = f"""動画原稿「{title}」の各センテンス（1文）に対応する英文画像プロンプトを書いてください。
+**各項目の type は厳守**（変更禁止）。type ごとに描き方が違います。
 
-入力（auto_extracted_terms はセンテンスから機械抽出した「数値・年代・括弧内固有名詞」のヒント）:
+入力（type=その項目の描画種別。auto_extracted_terms は機械抽出した数値・年代・固有名詞のヒント）:
 {inputs_json}
 
 {user_block}
 
+【最重要: type 別の描き方】
+- **realphoto**: 実写写真。"photorealistic documentary photograph, real photo, natural lighting,
+  realistic textures, cinematic" を必ず含める。**フラット/アイコン/イラストには絶対しない**。
+  上で指定したグラフィックスタイル（フラット等）は realphoto には適用しないこと。
+- **map**: リアルな衛星・地形図。"realistic satellite map, terrain, natural earth colors" を含める。
+  フラットな地図にはしない。上で指定したグラフィックスタイルは map には適用しないこと。
+- **illustration / diagram / chart / decorative**: 上で指定したグラフィックスタイルに従って描く。
+
 【最重要ルール】
 1. プロンプトは英語で書く
-2. **シンプルで分かりやすい説明画面を目指す**（雰囲気重視やドラマチック演出は不要）
-3. メタファー（クマ＝ロシア、ドラゴン＝中国 など寓意）は**禁止**。国は **国旗・国名・地図シルエット** で直接表現する
-4. **画像内テキストは allowed_terms にあるものだけ**（厳格）
+2. メタファー（クマ＝ロシア など寓意）は**禁止**。国は国旗・国名・地図で直接表現する
+3. **画像内テキストは allowed_terms にあるものだけ**（厳格）
+4. 出力の type は入力の type を**そのまま返す**（勝手に変えない）
 
 【allowed_terms 抽出方針（積極的に入れる）】
 - センテンスに登場する以下は**すべて** allowed_terms に入れること:
@@ -226,7 +238,11 @@ def generate_prompts_batch(
                     seen.add(t)
                     verified.append(t)
             p["allowed_terms"] = verified
-            if p.get("type") not in ("illustration", "realphoto", "map", "diagram", "chart", "decorative"):
+            # type はルーターの route を最優先で固定（Claudeが勝手に変えても上書き）
+            forced_type = r.get("route") or r.get("type")
+            if forced_type in ("illustration", "realphoto", "map", "diagram", "chart", "decorative"):
+                p["type"] = forced_type
+            elif p.get("type") not in ("illustration", "realphoto", "map", "diagram", "chart", "decorative"):
                 p["type"] = "illustration"
             merged.append(p)
         else:

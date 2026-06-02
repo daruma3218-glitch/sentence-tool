@@ -237,14 +237,18 @@ class SentencePipeline:
             }
         save_json(self.output_dir / "routes.json", routes)
 
-        # route を各行に反映
+        # route を各行に反映（row dict 自体にも route を入れる＝prompter が type 判定に使う）
+        for r in rows:
+            rt = routes.get(r["no"], {})
+            r["route"] = rt.get("route", "illustration")
+            r["route_reason"] = rt.get("reason", "")
         for no, rt in routes.items():
             self._update_row(no, route=rt.get("route", "illustration"), route_reason=rt.get("reason", ""))
 
         # route で 3 分類
-        web_photo_rows = [r for r in rows if routes.get(r["no"], {}).get("route") == "web_photo"]
-        ai_rows = [r for r in rows if routes.get(r["no"], {}).get("route") in AI_ROUTES]
-        skip_rows = [r for r in rows if routes.get(r["no"], {}).get("route") == "skip"]
+        web_photo_rows = [r for r in rows if r.get("route") == "web_photo"]
+        ai_rows = [r for r in rows if r.get("route") in AI_ROUTES]
+        skip_rows = [r for r in rows if r.get("route") == "skip"]
 
         # skip 文をマーク
         for r in skip_rows:
