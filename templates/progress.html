@@ -98,6 +98,10 @@
       </div>
 
       <div id="actions" class="hidden mt-5 flex flex-wrap gap-3">
+        <a id="galleryBtn" href="" target="_blank" class="inline-flex items-center gap-2 px-5 py-2.5 bg-white border-2 border-purple-500 text-purple-700 font-medium rounded-xl hover:bg-purple-50 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"/></svg>
+          画像ギャラリーを開く
+        </a>
         <a id="downloadCsvBtn" href="" class="inline-flex items-center gap-2 px-5 py-2.5 bg-white border-2 border-cyan-600 text-cyan-700 font-medium rounded-xl hover:bg-cyan-50 transition">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
           CSV ダウンロード（スプレッドシート用）
@@ -351,6 +355,7 @@
       const route = row.route || '';
       const map = {
         web_photo:    { icon: '🌐', label: 'Web写真', cls: 'bg-purple-50 text-purple-700' },
+        realphoto:    { icon: '📷', label: '実写風',   cls: 'bg-teal-50 text-teal-700' },
         map:          { icon: '🗺️', label: '地図',     cls: 'bg-green-50 text-green-700' },
         diagram:      { icon: '📊', label: '図解',     cls: 'bg-blue-50 text-blue-700' },
         chart:        { icon: '📈', label: 'グラフ',   cls: 'bg-amber-50 text-amber-700' },
@@ -405,6 +410,8 @@
           els.actions.classList.remove('hidden');
           els.downloadBtn.href = `/download/${JOB_ID}`;
           els.downloadCsvBtn.href = `/download/csv/${JOB_ID}`;
+          const gb = document.getElementById('galleryBtn');
+          if (gb) gb.href = `/results/${JOB_ID}/result.html`;
         }
         if (state.status === 'error') stopped = true;
       } catch (e) { console.error('status error', e); }

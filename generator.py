@@ -147,6 +147,15 @@ def _build_full_prompt(
             "Style: choose the most fitting illustration style for the content "
             "(watercolor, flat, line art, paper-cut, 3D rendered, comic, or minimal). "
         ),
+        "realphoto": (
+            "Style: PHOTOREALISTIC photograph, documentary / photojournalism quality. "
+            "Looks like a real photo taken with a professional camera: natural lighting, "
+            "realistic textures, depth of field, true-to-life colors. "
+            "Cinematic composition suitable for a documentary video. "
+            "Depict the actual physical scene (city, building, facility, infrastructure, "
+            "event, war scene, or people's daily life) realistically. "
+            "NOT an illustration, NOT a cartoon, NOT a flat graphic — a real photograph. "
+        ),
         "map": (
             "Style: PHOTOREALISTIC satellite / aerial map, like NASA Blue Marble, "
             "Google Earth, or National Geographic cartography. "
@@ -405,7 +414,7 @@ class ParallelImageGenerator:
         allowed_terms = prompt_entry.get("allowed_terms", [])
         # 行ごとのスタイル指定があればそれを優先（プロパガンダ・ミックス用）
         row_style = prompt_entry.get("style") or self.style_preset
-        filename = f"diagram_{idx:03d}.png"
+        filename = f"{idx}.png"  # 数字だけのファイル名（№と一致）
         output_path = output_dir / filename
 
         async with semaphore:

@@ -174,6 +174,9 @@ def generate_prompts_batch(
 
 【type の選び方】
 - illustration: 人物・物・出来事のイラスト（**シンプルアイコン調**）
+- realphoto: **実写風の写真**。都市・建物・施設・インフラ・事件・戦争・人々の生活など
+  物理的なシーンを、ドキュメンタリー写真のようにリアルに描く（イラストではなく本物の写真）。
+  自然光・実在感のある質感・映画的構図。報道写真／ドキュメンタリー品質を目指す。
 - map: 地理関係。**フラットな図ではなく、衛星写真／航空写真のようなリアルな地図**にすること。
   上空から見た本物の地球表面（青い海・緑の森林・茶色の山岳・白い雪原・リアルな海岸線）を描き、
   地形の起伏（レリーフシェーディング）も表現する。対象の国・地域は半透明の色で塗り分け、
@@ -187,7 +190,7 @@ def generate_prompts_batch(
   {{
     "no": (元のno),
     "prompt": "英語プロンプト（スタイル指示・テキスト制約を必ず含む）",
-    "type": "illustration | map | diagram | chart | decorative",
+    "type": "illustration | realphoto | map | diagram | chart | decorative",
     "allowed_terms": ["積極的に抽出した語"]
   }},
   ...
@@ -223,7 +226,7 @@ def generate_prompts_batch(
                     seen.add(t)
                     verified.append(t)
             p["allowed_terms"] = verified
-            if p.get("type") not in ("illustration", "map", "diagram", "chart", "decorative"):
+            if p.get("type") not in ("illustration", "realphoto", "map", "diagram", "chart", "decorative"):
                 p["type"] = "illustration"
             merged.append(p)
         else:

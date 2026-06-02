@@ -285,10 +285,23 @@ def start_job():
     if missing:
         return jsonify({"error": f"{', '.join(missing)} が設定されていません"}), 400
 
-    # 原稿取得
+    # 原稿取得（.docx は見出しスタイルを章として解析）
     manuscript_text = ""
+    prebuilt_chapters = None
     if "manuscript_file" in request.files and request.files["manuscript_file"].filename:
-        manuscript_text = request.files["manuscript_file"].read().decode("utf-8", errors="ignore")
+        f = request.files["manuscript_file"]
+        fname = f.filename.lower()
+        raw = f.read()
+        if fname.endswith(".docx"):
+            try:
+                from splitter import parse_docx_to_chapters
+                manuscript_text, prebuilt_chapters = parse_docx_to_chapters(raw)
+                if not prebuilt_chapters:
+                    return jsonify({"error": ".docx から本文を抽出できませんでした"}), 400
+            except Exception as e:
+                return jsonify({"error": f".docx の解析に失敗: {str(e)[:120]}"}), 400
+        else:
+            manuscript_text = raw.decode("utf-8", errors="ignore")
     elif request.form.get("manuscript_text"):
         manuscript_text = request.form["manuscript_text"]
     else:
@@ -311,6 +324,10 @@ def start_job():
     (job_dir / "manuscript.txt").write_text(manuscript_text, encoding="utf-8")
     if user_instructions:
         (job_dir / "user_instructions.txt").write_text(user_instructions, encoding="utf-8")
+    # .docx の見出しから作った章構造を保存（pipeline が読み込む）
+    if prebuilt_chapters:
+        (job_dir / "prebuilt_chapters.json").write_text(
+            json.dumps({"chapters": prebuilt_chapters}, ensure_ascii=False), encoding="utf-8")
 
     _set_job_state(
         job_id,
@@ -432,6 +449,7 @@ def download_zip(job_id):
                 if img.is_file() and img.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
                     zf.write(img, f"images/{img.name}")
         for extra, arc in [("result.csv", "result.csv"),
+                           ("result.html", "result.html"),
                            ("manifest.json", "manifest.json"),
                            ("manuscript.txt", "manuscript.txt")]:
             p = result_dir / extra

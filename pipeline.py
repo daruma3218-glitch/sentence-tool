@@ -176,7 +176,16 @@ class SentencePipeline:
         # ===== Phase 1: 分解 =====
         self._progress(1, "原稿を章/ブロック/センテンスに分解中...", 5)
         self._log("splitter", "Claude で原稿を分解しています...")
-        split_result = split_manuscript(client, self.manuscript_text, log=self._log)
+        # .docx の見出しから作った章構造があれば使う
+        prebuilt = None
+        pc_path = self.output_dir / "prebuilt_chapters.json"
+        if pc_path.exists():
+            try:
+                prebuilt = load_json(pc_path, {}).get("chapters") or None
+            except Exception:
+                prebuilt = None
+        split_result = split_manuscript(client, self.manuscript_text, log=self._log,
+                                        prebuilt_chapters=prebuilt)
         analysis = split_result["analysis"]
         chapters = split_result["chapters"]
         rows = split_result["rows"]
@@ -298,7 +307,7 @@ class SentencePipeline:
             local_file = ""
             thumb_url = info.get("thumb_url", "")
             if thumb_url:
-                fname = f"web_{info['no']:03d}.jpg"
+                fname = f"{info['no']}.jpg"  # 数字だけのファイル名（№と一致）
                 if download_thumbnail(thumb_url, self.images_dir / fname):
                     local_file = fname
             self._update_row(
@@ -404,10 +413,13 @@ class SentencePipeline:
                 if self.propaganda_mix and routes.get(no, {}).get("propaganda"):
                     row_style = "soviet_propaganda"
                     self._update_row(no, propaganda=True)
+                # 画像 type はルーターの route を最優先（realphoto/map 等を確実に反映）
+                route_type = routes.get(no, {}).get("route", "")
+                img_type = route_type if route_type in AI_ROUTES else r.get("type", "illustration")
                 generation_targets.append({
                     "index": no,
                     "prompt": r.get("prompt", ""),
-                    "type": r.get("type", "illustration"),
+                    "type": img_type,
                     "section": r.get("chapter_title", ""),
                     "excerpt": r.get("sentence", ""),
                     "keypoint": r.get("sentence", "")[:30],
@@ -511,12 +523,73 @@ class SentencePipeline:
         # CSV
         self._write_csv(self.output_dir / "result.csv", final_rows)
 
+        # HTML ギャラリー（画像を埋め込んだ表。開けばぱっと全体を見渡せる）
+        self._write_gallery(self.output_dir / "result.html", final_rows, title)
+
         self._progress(4, f"完了: 図解 {success_count} / Web {web_count_final} / 全 {total_sentences} 文", 100)
         return manifest
+
+    def _write_gallery(self, path: Path, rows: list, title: str):
+        """画像を埋め込んだ HTML ギャラリーを出力（相対パスで自己完結）"""
+        import html as _html
+
+        def cell_img(r):
+            fn = r.get("filename") or r.get("web_local_file") or ""
+            if fn:
+                return f'<img src="images/{_html.escape(fn)}" loading="lazy">'
+            st = r.get("status", "")
+            if st == "skipped" or r.get("route") == "skip":
+                return '<span class="no">—（スキップ）</span>'
+            return '<span class="no">（画像なし）</span>'
+
+        parts = [f"""<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{_html.escape(title)} - 画像ギャラリー</title>
+<style>
+ body{{font-family:'Hiragino Sans','Noto Sans JP',sans-serif;margin:0;padding:24px;background:#f8fafc;color:#1f2937}}
+ h1{{font-size:20px;margin:0 0 16px}}
+ table{{border-collapse:collapse;width:100%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.1)}}
+ th,td{{border:1px solid #e5e7eb;padding:8px;vertical-align:top;font-size:13px}}
+ th{{background:#f1f5f9;position:sticky;top:0;text-align:left}}
+ td.no{{text-align:center;color:#9ca3af;font-family:monospace;width:48px}}
+ td.chap{{font-weight:600;color:#0e7490;width:120px}}
+ td.sent{{max-width:340px}}
+ td.img{{width:340px;text-align:center}}
+ td.img img{{max-width:320px;max-height:180px;border-radius:6px;border:1px solid #e5e7eb}}
+ .src{{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;background:#eef2ff;color:#4338ca}}
+ .no{{color:#cbd5e1;font-size:12px}}
+ a{{color:#7c3aed}}
+</style></head><body>
+<h1>{_html.escape(title)} — 画像ギャラリー（全 {len(rows)} 文）</h1>
+<table><thead><tr>
+<th>№</th><th>章</th><th>センテンス</th><th>ソース</th><th>画像</th>
+</tr></thead><tbody>"""]
+        last_chap = None
+        for r in rows:
+            chap = r.get("chapter_title", "")
+            chap_show = chap if chap != last_chap else ""
+            last_chap = chap
+            route_label = self.ROUTE_LABELS.get(r.get("route", ""), r.get("route", ""))
+            web_link = ""
+            if r.get("web_source_url"):
+                web_link = f'<br><a href="{_html.escape(r["web_source_url"])}" target="_blank">出典</a>'
+            parts.append(
+                f'<tr><td class="no">{r.get("no","")}</td>'
+                f'<td class="chap">{_html.escape(chap_show)}</td>'
+                f'<td class="sent">{_html.escape(r.get("sentence",""))}</td>'
+                f'<td><span class="src">{_html.escape(route_label)}</span>{web_link}</td>'
+                f'<td class="img">{cell_img(r)}</td></tr>'
+            )
+        parts.append("</tbody></table></body></html>")
+        try:
+            path.write_text("\n".join(parts), encoding="utf-8")
+        except Exception as e:
+            self._log("warn", f"ギャラリー出力に失敗: {str(e)[:80]}")
 
     # ルート → 日本語ラベル
     ROUTE_LABELS = {
         "web_photo": "Web写真",
+        "realphoto": "実写風",
         "map": "地図",
         "diagram": "図解",
         "chart": "グラフ",

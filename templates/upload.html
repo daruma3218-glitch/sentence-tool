@@ -73,11 +73,12 @@
             </label>
 
             <div id="dropZone" class="drop-zone border-2 border-dashed border-gray-300 rounded-xl p-6 text-center cursor-pointer bg-white">
-              <input type="file" id="fileInput" name="manuscript_file" accept=".txt,.md" class="hidden">
+              <input type="file" id="fileInput" name="manuscript_file" accept=".txt,.md,.docx" class="hidden">
               <svg class="w-10 h-10 text-gray-400 mx-auto mb-2" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 8.25H7.5a2.25 2.25 0 00-2.25 2.25v9a2.25 2.25 0 002.25 2.25h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25H15M9 12l3 3m0 0l3-3m-3 3V2.25"/>
               </svg>
-              <p id="dropText" class="text-sm text-gray-600">クリックまたはドラッグ&ドロップで .txt / .md ファイル</p>
+              <p id="dropText" class="text-sm text-gray-600">クリックまたはドラッグ&ドロップで .txt / .md / .docx ファイル</p>
+              <p class="text-xs text-gray-400 mt-1">Googleドキュメントは「ファイル→ダウンロード→Word(.docx)」でDLしてアップ。見出しスタイルが章タイトルになります</p>
               <p class="text-xs text-gray-400 mt-1">下のテキストエリアに直接貼り付けでもOK</p>
             </div>
 
@@ -275,16 +276,6 @@
               <div>
                 <span class="text-sm font-medium text-gray-700 block">挨拶や接続詞はスキップ</span>
                 <span class="text-xs text-gray-400">「では」「皆さんこんにちは」など視覚化困難な文は画像生成を省く（コスト削減）</span>
-              </div>
-            </label>
-          </div>
-
-          <div class="bg-white rounded-xl border border-red-200 p-4">
-            <label class="flex items-start gap-3 cursor-pointer">
-              <input type="checkbox" name="propaganda_mix" class="mt-1 w-4 h-4 text-red-700 rounded">
-              <div>
-                <span class="text-sm font-medium text-gray-700 block">⭐ プロパガンダ・ミックス（文ごとに様式判定）</span>
-                <span class="text-xs text-gray-400">歴史的転換点・権力者・思想対立などドラマチックな文だけ自動でソ連プロパガンダ風に。通常の文は上で選んだスタイルのまま。<strong>※スタイルが「ソ連プロパガンダ風」のときは無効（全部プロパガンダになるため）</strong></span>
               </div>
             </label>
           </div>

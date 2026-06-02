@@ -258,9 +258,11 @@ def download_thumbnail(thumb_url: str, output_path) -> bool:
     """Wikimedia 等のサムネイル画像をローカルに保存する。
 
     参考用の低解像度サムネイル（Wikimedia Commons は大半が CC/PD）を
-    動画素材の下調べ用にダウンロードする。失敗しても致命的ではない。
+    動画素材の下調べ用にダウンロードする。
+    壊れたURL・極小画像（ロゴ/アイコン）は検証して弾く。
     """
     from pathlib import Path
+    from io import BytesIO
     if not thumb_url:
         return False
     output_path = Path(output_path)
@@ -270,9 +272,25 @@ def download_thumbnail(thumb_url: str, output_path) -> bool:
             headers={"User-Agent": "sentence-tool/1.0 (educational video material research)"},
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
+            if getattr(resp, "status", 200) != 200:
+                return False
+            ctype = resp.headers.get("Content-Type", "")
             data = resp.read()
-        if not data or len(data) < 200:  # 壊れた応答
+        # Content-Type が画像でない（HTMLエラーページ等）→ 弾く
+        if "image" not in ctype.lower():
             return False
+        if not data or len(data) < 500:
+            return False
+        # PIL で実画像か検証 + サイズチェック（極小ロゴ/アイコンを除外）
+        try:
+            from PIL import Image
+            img = Image.open(BytesIO(data))
+            img.load()
+            w, h = img.size
+            if w < 80 or h < 80:
+                return False  # 小さすぎ（ロゴ・アイコンの可能性）
+        except Exception:
+            return False  # 画像として開けない＝壊れURL
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(data)
         return True

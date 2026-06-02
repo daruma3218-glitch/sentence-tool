@@ -266,12 +266,67 @@ JSON のみで返すこと。"""
     }
 
 
+def parse_docx_to_chapters(file_bytes: bytes) -> tuple:
+    """Word(.docx) を解析し、見出しスタイルを章タイトルとして章/ブロック構造を作る。
+
+    Google ドキュメントを「ファイル→ダウンロード→Word(.docx)」した想定。
+    「見出し1/2/Heading/Title/タイトル」スタイルの段落を章タイトルとして扱う。
+
+    戻り値: (full_text, chapters)
+      chapters は mechanical_split と同じ形式（title 付き）。
+    """
+    from io import BytesIO
+    from docx import Document
+
+    doc = Document(BytesIO(file_bytes))
+    chapters = []
+    current = None
+    text_parts = []
+
+    for para in doc.paragraphs:
+        text = (para.text or "").strip()
+        if not text:
+            continue
+        style_name = ""
+        try:
+            style_name = (para.style.name or "").lower()
+        except Exception:
+            style_name = ""
+        is_heading = (
+            style_name.startswith("heading")
+            or style_name.startswith("title")
+            or "見出し" in style_name
+            or "タイトル" in style_name
+        )
+        if is_heading:
+            current = {"title": text, "blocks": []}
+            chapters.append(current)
+            text_parts.append("\n\n\n" + text)
+        else:
+            if current is None:
+                current = {"title": "", "blocks": []}
+                chapters.append(current)
+            sentences = split_into_sentences(text)
+            if sentences:
+                current["blocks"].append({"text": text, "sentences": sentences})
+            text_parts.append(text)
+
+    # 本文のない章（見出しだけ）は除去
+    chapters = [c for c in chapters if c["blocks"]]
+    full_text = "\n".join(text_parts).strip()
+    return full_text, chapters
+
+
 def split_manuscript(
     client: anthropic.Anthropic,
     manuscript_text: str,
     log: Optional[Callable] = None,
+    prebuilt_chapters: Optional[list] = None,
 ) -> dict:
     """エントリポイント: 原稿を分解してフラットリストを返す
+
+    prebuilt_chapters を渡すと機械分割をスキップし、その章構造を使う
+    （.docx の見出しから作った章など）。タイトル未設定の章は Claude が命名。
 
     戻り値:
       {
@@ -286,11 +341,15 @@ def split_manuscript(
     if not manuscript_text or not manuscript_text.strip():
         raise ValueError("原稿が空です")
 
-    log("splitter", f"原稿（{len(manuscript_text)}文字）を機械的に分割中...")
-    chapters = mechanical_split(manuscript_text)
-    log("splitter", f"章 {len(chapters)} 個 / ブロック {sum(len(c['blocks']) for c in chapters)} 個 検出")
+    if prebuilt_chapters:
+        chapters = prebuilt_chapters
+        log("splitter", f".docx の見出しから章 {len(chapters)} 個を検出（見出しスタイル使用）")
+    else:
+        log("splitter", f"原稿（{len(manuscript_text)}文字）を機械的に分割中...")
+        chapters = mechanical_split(manuscript_text)
+        log("splitter", f"章 {len(chapters)} 個 / ブロック {sum(len(c['blocks']) for c in chapters)} 個 検出")
 
-    # 章タイトルを Claude が命名
+    # 章タイトルを Claude が命名（タイトル未設定のものだけ補完される）
     chapters = name_chapters_with_claude(client, chapters, log=log)
 
     # 全体メタ情報
