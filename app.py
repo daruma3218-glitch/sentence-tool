@@ -12,7 +12,7 @@ import os
 import secrets
 import threading
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from flask import (
@@ -38,9 +38,35 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 load_env(PROJECT_ROOT)
 
+def _resolve_secret_key() -> str:
+    """安定した SECRET_KEY を取得する。
+
+    優先順: 環境変数 SECRET_KEY → 永続ファイル(.secret_key) → 新規生成して永続化。
+    こうすることでサーバー再起動やワーカー間でも同じ鍵を使い、
+    セッション（ログイン状態）が無効化されない。
+    """
+    env_key = os.environ.get("SECRET_KEY", "").strip()
+    if env_key:
+        return env_key
+    key_file = PROJECT_ROOT / ".secret_key"
+    try:
+        if key_file.exists():
+            saved = key_file.read_text(encoding="utf-8").strip()
+            if saved:
+                return saved
+        new_key = secrets.token_hex(32)
+        key_file.write_text(new_key, encoding="utf-8")
+        return new_key
+    except Exception:
+        # ファイルに書けない環境では一応ランダム（最終手段）
+        return secrets.token_hex(32)
+
+
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20MB
-app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+app.secret_key = _resolve_secret_key()
+# セッションを永続化（ブラウザを閉じても・長時間ダウンロード中でも切れない）
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=14)
 
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 
@@ -71,6 +97,7 @@ def login():
     error = None
     if request.method == "POST":
         if request.form.get("password", "") == APP_PASSWORD:
+            session.permanent = True  # 14日間有効（PERMANENT_SESSION_LIFETIME）
             session["authenticated"] = True
             return redirect(url_for("index"))
         error = "パスワードが正しくありません"
@@ -390,34 +417,43 @@ def download_zip(job_id):
     title = manifest.get("title", job_id)
     safe_title = "".join(c for c in title if c not in r'\/:*?"<>|').strip()[:50] or job_id
 
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        # 画像
+    # ZIP はメモリ(BytesIO)ではなく一時ファイルに書き出す。
+    # 大量画像(100枚超)を BytesIO に展開すると Render Free(512MB)で
+    # メモリ超過 → ワーカー再起動 → ダウンロード中断/ログアウトの原因になるため。
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(prefix=f"{job_id}_", suffix=".zip", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    # 画像は既に圧縮済み(PNG/JPG)なので ZIP_STORED で CPU/メモリを節約
+    with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_STORED) as zf:
         images_dir = result_dir / "images"
         if images_dir.exists():
             for img in sorted(images_dir.iterdir()):
                 if img.is_file() and img.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
                     zf.write(img, f"images/{img.name}")
-        # CSV
-        csv_path = result_dir / "result.csv"
-        if csv_path.exists():
-            zf.write(csv_path, "result.csv")
-        # マニフェスト
-        manifest_path = result_dir / "manifest.json"
-        if manifest_path.exists():
-            zf.write(manifest_path, "manifest.json")
-        # 原稿
-        ms_path = result_dir / "manuscript.txt"
-        if ms_path.exists():
-            zf.write(ms_path, "manuscript.txt")
+        for extra, arc in [("result.csv", "result.csv"),
+                           ("manifest.json", "manifest.json"),
+                           ("manuscript.txt", "manuscript.txt")]:
+            p = result_dir / extra
+            if p.exists():
+                zf.write(p, arc)
 
-    zip_buffer.seek(0)
-    return send_file(
-        zip_buffer,
+    resp = send_file(
+        tmp_path,
         mimetype="application/zip",
         as_attachment=True,
         download_name=f"{safe_title}_{job_id}.zip",
     )
+
+    # 送信完了後に一時ファイルを削除
+    @resp.call_on_close
+    def _cleanup():
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    return resp
 
 
 if __name__ == "__main__":

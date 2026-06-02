@@ -7,3 +7,4 @@ output/*/
 .venv/
 venv/
 *.log
+.secret_key
