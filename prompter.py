@@ -157,6 +157,9 @@ def generate_prompts_batch(
 - **realphoto**: 実写写真。"photorealistic documentary photograph, real photo, natural lighting,
   realistic textures, cinematic" を必ず含める。**フラット/アイコン/イラストには絶対しない**。
   上で指定したグラフィックスタイル（フラット等）は realphoto には適用しないこと。
+  **日本語ラベルは入れない**。画面内の看板・標識は描かれている場所の現地語
+  （ロシア/ソ連のシーンならロシア語＝キリル文字）にすること。
+  プロンプトに "signs and text in the local language (Russian/Cyrillic for Russia), no Japanese labels" と明記。
 - **map**: リアルな衛星・地形図。"realistic satellite map, terrain, natural earth colors" を含める。
   フラットな地図にはしない。上で指定したグラフィックスタイルは map には適用しないこと。
 - **illustration / diagram / chart / decorative**: 上で指定したグラフィックスタイルに従って描く。

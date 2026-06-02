@@ -184,7 +184,18 @@ def _build_full_prompt(
 
     # 画像内テキストのホワイトリスト指示（最重要）
     terms = [t for t in (allowed_terms or []) if isinstance(t, str) and t.strip()]
-    if terms:
+    if prompt_type == "realphoto":
+        # 実写写真は「現地のリアルな看板・標識」が映える。日本語ラベルは載せない。
+        text_policy = (
+            "*** TEXT POLICY for a REALISTIC PHOTO (CRITICAL) ***\n"
+            "- Do NOT add Japanese text, informational labels, captions, titles, or annotations.\n"
+            "- Any signage, shop signs, street signs, billboards, or text that naturally appears "
+            "in the scene MUST be in the LOCAL LANGUAGE of the depicted real-world location "
+            "(e.g., Russian / Cyrillic for a scene in Russia or the USSR; the local language "
+            "for other countries). NEVER use Japanese on signs in a foreign scene.\n"
+            "- Keep such incidental text minimal and natural, like in a real documentary photo.\n"
+        )
+    elif terms:
         terms_str = ", ".join(terms)
         text_policy = (
             "*** TEXT POLICY (CRITICAL — VIOLATION IS UNACCEPTABLE) ***\n"
