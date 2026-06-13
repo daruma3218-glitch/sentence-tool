@@ -408,6 +408,16 @@ class SentencePipeline:
         for r in rows:
             self._update_row(r["no"], engine=r.get("engine", "ai"))
 
+        # メモリ解放: 地図用 GeoJSON（shapely 幾何・数十MB）を生成フェーズ前に手放す。
+        # 画像生成が最もメモリを使うため、ここで返すと 512MB 環境の OOM を緩和できる。
+        try:
+            import gc
+            from renderer import clear_geo_cache
+            clear_geo_cache()
+            gc.collect()
+        except Exception:
+            pass
+
         # route で分類（engine:render はレンダリング済みなので AI 対象から除外）
         web_photo_rows = [r for r in rows if r.get("route") == "web_photo"]
         ai_rows = [r for r in rows if r.get("route") in AI_ROUTES
@@ -627,11 +637,23 @@ class SentencePipeline:
 
         provider_label = ("nanobanana (Gemini)" if self.provider == PROVIDER_NANOBANANA
                           else f"gpt-image ({self.openai_quality})")
+        # メモリ安全: 大量枚数のジョブは並列を控えめにして 512MB 環境の OOM を避ける。
+        # （同時に処理する画像が減るとピークメモリが下がる。安定優先で少し遅くなる。）
+        n_gen = len(generation_targets)
+        eff_concurrency = self.concurrency
+        if n_gen > 120:
+            eff_concurrency = min(eff_concurrency, 2)
+        elif n_gen > 60:
+            eff_concurrency = min(eff_concurrency, 3)
+        if eff_concurrency != self.concurrency:
+            self._log("generator",
+                      f"メモリ保護のため並列を {self.concurrency} → {eff_concurrency} に調整（{n_gen} 枚）",
+                      "512MB環境のOOM回避。安定優先で少し時間がかかります")
         self._progress(3,
-                       f"画像を並列生成中（{provider_label} / 同時 {self.concurrency} 枚 / {len(generation_targets)} 枚）...",
+                       f"画像を並列生成中（{provider_label} / 同時 {eff_concurrency} 枚 / {n_gen} 枚）...",
                        40)
         self._log("generator",
-                  f"{provider_label} で {len(generation_targets)} 枚を並列生成します",
+                  f"{provider_label} で {n_gen} 枚を並列生成します",
                   f"スタイル: {self.style_preset}")
 
         def on_item_event(info: dict):
@@ -661,7 +683,7 @@ class SentencePipeline:
             gemini_api_key=gemini_key,
             openai_api_key=openai_key,
             openai_quality=self.openai_quality,
-            concurrency=self.concurrency,
+            concurrency=eff_concurrency,
             style_preset=self.style_preset,
             progress_callback=on_item_event,
             reference_image_path=self.character_ref_path,

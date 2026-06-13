@@ -83,3 +83,15 @@ def test_big_number_huge_renders(tmp_path):
     assert renderer.render_chart(spec, out, theme=THEME) is True
     with Image.open(out) as im:
         assert im.size == (1920, 1080)
+
+
+def test_clear_geo_cache_frees_memory():
+    """地図キャッシュを読み込み→解放できる（512MB環境のOOM緩和）。空でも例外なし。"""
+    # 空の状態で呼んでも落ちない
+    renderer.clear_geo_cache()
+    assert renderer._GEO_CACHE is None
+    # 読み込み→解放→Noneを確認（geojson/shapely が無い環境でも _load_geo は {} を返す）
+    renderer._load_geo()
+    assert renderer._GEO_CACHE is not None  # ロード後はキャッシュが入る（{}含む）
+    renderer.clear_geo_cache()
+    assert renderer._GEO_CACHE is None  # 解放後は None（次回再読込）

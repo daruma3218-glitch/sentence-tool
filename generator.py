@@ -651,6 +651,14 @@ class ParallelImageGenerator:
                 completed_now = self._completed
                 failed_now = self._failed
 
+            # メモリ解放: 一定枚数ごとに GC（512MB 環境での OOM 緩和。ロック外で実行）
+            if (completed_now + failed_now) % 10 == 0:
+                try:
+                    import gc
+                    gc.collect()
+                except Exception:
+                    pass
+
             result = {
                 "index": idx,
                 "filename": filename if success else None,

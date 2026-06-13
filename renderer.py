@@ -462,6 +462,22 @@ def _load_geo():
     return cache
 
 
+def clear_geo_cache():
+    """地図描画後に GeoJSON（shapely 幾何）の常駐キャッシュを解放する。
+
+    Natural Earth の全世界ポリゴンを shapely 幾何として保持するため数十MB規模。
+    画像生成フェーズ（最もメモリを使う）の前に解放して 512MB 環境の OOM を緩和する。
+    次に地図描画が必要になれば _load_geo が再読込する（決定論なので結果は不変）。
+    """
+    global _GEO_CACHE
+    _GEO_CACHE = None
+    try:
+        import gc
+        gc.collect()
+    except Exception:
+        pass
+
+
 def _rep_point(info, extent=None):
     """ラベル/矢印用の代表点（内点）。extent を渡すと、表示範囲に交差した
     可視部分の中で代表点を取る（ロシア等の大国でも画面内に配置される）。"""
