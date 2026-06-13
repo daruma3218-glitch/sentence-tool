@@ -235,11 +235,16 @@
       return `<span class="w-2 h-2 ${v.dot} rounded-full"></span><span>${v.label}</span>`;
     }
 
+    function regenBtn(no) {
+      // AI生成系の行だけ再生成可（再生成は同じプロンプトで作り直す）
+      return `<button onclick='regenerateScene(${no}, event)' class="regen-btn mt-1 text-[10px] text-cyan-600 hover:text-cyan-800 hover:underline">🔄 再生成</button>`;
+    }
+
     function thumbCellHtml(row) {
       const status = row.status || 'pending';
       const filename = row.filename;
       if (status === 'ok' && filename) {
-        return `<img src="/results/${JOB_ID}/images/${filename}" class="thumb-img pop-in" onclick='openModal(${row.no})' alt="" loading="lazy">`;
+        return `<img src="/results/${JOB_ID}/images/${filename}?t=${Date.now()}" class="thumb-img pop-in" onclick='openModal(${row.no})' alt="" loading="lazy"><br>${regenBtn(row.no)}`;
       } else if (status === 'generating') {
         return `<div class="skeleton w-20 h-[45px] rounded flex items-center justify-center mx-auto">
                   <div class="w-4 h-4 border-2 border-cyan-200 border-t-cyan-600 rounded-full animate-spin"></div>
@@ -247,7 +252,7 @@
       } else if (status === 'failed') {
         return `<div class="w-20 h-[45px] bg-red-50 rounded flex items-center justify-center mx-auto" title="${escapeHtml(row.error || '失敗')}">
                   <svg class="w-4 h-4 text-red-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
-                </div>`;
+                </div>${regenBtn(row.no)}`;
       } else if (status === 'skipped') {
         return `<div class="w-20 h-[45px] bg-purple-50 rounded flex items-center justify-center mx-auto text-purple-400 text-[10px]">スキップ</div>`;
       } else if (status === 'thinned' || status === 'skipped_limit') {
@@ -365,7 +370,10 @@
       const v = map[route];
       if (!v) return `<span class="text-gray-300 text-[10px]">—</span>`;
       const reason = escapeHtml(row.route_reason || '');
-      return `<span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${v.cls}" title="${reason}">${v.icon} ${v.label}</span>`;
+      const badge = `<span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${v.cls}" title="${reason}">${v.icon} ${v.label}</span>`;
+      // ルート違いフィードバック（次回以降のルーター学習に反映）
+      const fb = `<br><button onclick='reportRouteError(${row.no}, event)' class="mt-0.5 text-[9px] text-gray-400 hover:text-rose-500 hover:underline" title="このルート判定が違う場合に正しいルートを教えると、次回以降のルーターが学習します">✎ ルート違い</button>`;
+      return badge + fb;
     }
 
     function updateSummary(rows) {
@@ -464,6 +472,63 @@
         });
         els.logsContainer.scrollTop = els.logsContainer.scrollHeight;
       } catch (e) { console.error('logs error', e); }
+    }
+
+    async function regenerateScene(no, ev) {
+      if (ev) ev.stopPropagation();
+      const tr = document.querySelector(`tr[data-no="${no}"]`);
+      if (!tr) return;
+      const extra = prompt(`№${no} を再生成します。\n変えたい点があれば指示を入力（空欄ならそのまま作り直し）:`, "");
+      if (extra === null) return;  // キャンセル
+      const cell = tr.querySelector('.thumb-cell');
+      if (cell) cell.innerHTML = `<div class="skeleton w-20 h-[45px] rounded flex items-center justify-center mx-auto"><div class="w-4 h-4 border-2 border-cyan-200 border-t-cyan-600 rounded-full animate-spin"></div></div>`;
+      try {
+        const fd = new FormData();
+        if (extra.trim()) fd.append('extra_instruction', extra.trim());
+        const res = await fetch(`/api/regenerate/${JOB_ID}/${no}`, { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          alert('再生成に失敗: ' + (data.error || res.status));
+          if (cell) cell.innerHTML = `<div class="w-20 h-[45px] bg-red-50 rounded flex items-center justify-center mx-auto text-red-400 text-[10px]">失敗</div>` + `<button onclick='regenerateScene(${no}, event)' class="mt-1 text-[10px] text-cyan-600 hover:underline">🔄 再生成</button>`;
+          return;
+        }
+        // 成功 → 画像をキャッシュ回避で再表示
+        if (cell) {
+          cell.innerHTML = `<img src="/results/${JOB_ID}/images/${data.filename}?t=${data.ts}${Date.now()}" class="thumb-img pop-in" onclick='openModal(${no})' alt="" loading="lazy"><br><button onclick='regenerateScene(${no}, event)' class="mt-1 text-[10px] text-cyan-600 hover:underline">🔄 再生成</button>`;
+        }
+        tr.setAttribute('data-filename', data.filename);
+        tr.setAttribute('data-status', 'ok');
+      } catch (e) {
+        alert('通信エラー: ' + e.message);
+      }
+    }
+
+    // ルート違いを記録 → 次回以降のルーターが few-shot として学習する
+    const ROUTE_CHOICES = [
+      ['web_photo', '🌐 Web写真'], ['realphoto', '📷 実写風'], ['map', '🗺️ 地図'],
+      ['diagram', '📊 図解'], ['chart', '📈 グラフ'], ['illustration', '🎨 イラスト'], ['skip', '⊘ スキップ'],
+    ];
+    async function reportRouteError(no, ev) {
+      if (ev) ev.stopPropagation();
+      const tr = document.querySelector(`tr[data-no="${no}"]`);
+      const cur = tr ? (tr.getAttribute('data-route') || '') : '';
+      const menu = ROUTE_CHOICES.map((c, i) => `${i + 1}. ${c[1]}`).join('\n');
+      const ans = prompt(`№${no} の正しいルートを番号で選んでください（現在: ${cur}）。\nこの修正は次回以降のルーター学習に反映されます。\n\n${menu}`, "");
+      if (ans === null) return;
+      const idx = parseInt(ans.trim(), 10) - 1;
+      if (isNaN(idx) || idx < 0 || idx >= ROUTE_CHOICES.length) { alert('番号が不正です'); return; }
+      const correct = ROUTE_CHOICES[idx][0];
+      if (correct === cur) { alert('現在と同じルートです'); return; }
+      try {
+        const fd = new FormData();
+        fd.append('correct_route', correct);
+        const res = await fetch(`/api/feedback/${JOB_ID}/${no}`, { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok || data.error) { alert('記録に失敗: ' + (data.error || res.status)); return; }
+        alert(`記録しました（${data.given_route} → ${data.correct_route}）。次回以降のルーターが学習します。`);
+      } catch (e) {
+        alert('通信エラー: ' + e.message);
+      }
     }
 
     function openModal(no) {

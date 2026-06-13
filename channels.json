@@ -1,0 +1,64 @@
+{
+  "_readme": "ロシア解体新書 センテンスつくーる のチャンネル定義。アプリは1つ・設定はチャンネル別。api_env_prefix を設定すると <PREFIX>_OPENAI_API_KEY / <PREFIX>_GEMINI_API_KEY / <PREFIX>_ANTHROPIC_API_KEY を優先（未設定なら共通キーにフォールバック）。Render の環境変数でキーを管理するとデプロイで消えず安全。",
+  "channels": [
+    {
+      "id": "default",
+      "name": "共通（デフォルト）",
+      "api_env_prefix": "",
+      "defaults": {
+        "provider": "nanobanana",
+        "openai_quality": "medium",
+        "style_preset": "flat_infographic",
+        "route_mode": "auto",
+        "worldview_mode": false,
+        "worldview_desc": "",
+        "concurrency": 8,
+        "max_diagrams": 150,
+        "verify_diagrams": false,
+        "chart_engine": "render",
+        "map_engine": "render",
+        "photo_source": "web",
+        "beat_mode": false,
+        "chars_per_sec": 5.5,
+        "realphoto_watermark": true,
+        "chart_theme": {
+          "bg": "#FBFAF7", "main": "#1E3A5F", "accent": "#B22222",
+          "grid": "#E5E7EB", "text": "#1F2937", "font": "NotoSansJP"
+        },
+        "skip_decorative": false,
+        "web_image_count": 30,
+        "user_instructions": ""
+      }
+    },
+    {
+      "id": "roshia",
+      "name": "ロシア解体新書",
+      "api_env_prefix": "",
+      "defaults": {
+        "provider": "nanobanana",
+        "openai_quality": "medium",
+        "style_preset": "flat_infographic",
+        "route_mode": "auto",
+        "worldview_mode": true,
+        "worldview_desc": "ART STYLE / TONE (match this in EVERY illustration): a clean, simple, readable FLAT illustration style for a serious-but-approachable geopolitics / world-history explainer channel about Russia, the USSR and its neighbors. Thick, even, clean outlines. Flat cel-shading with minimal gradients, no heavy rendering or photo-realism. Calm, documentary, trustworthy mood — informative rather than sensational. THE NARRATOR (the channel's signature recurring character — use this EXACT design every time a narrator / explainer / guide character appears; the attached reference image is the authoritative design when provided): keep the same face, hairstyle, build, clothing and color palette in every scene the character appears in, changing only pose, expression and background. SIGNAGE: any signs, shop signs, street signs, billboards, documents or text that naturally appear in a scene MUST be in the LOCAL LANGUAGE of the depicted place (Russian / Cyrillic for Russia or the USSR; the local language elsewhere). Do NOT put Japanese labels inside illustrations. PALETTE: serious, cohesive tones — deep navy as the main color with a calm muted red as the single accent (evokes the Russia theme without looking like propaganda). Keep character design, line weight, color palette and the simple flat tone unified across every scene so the whole video looks like one cohesive series.",
+        "concurrency": 4,
+        "max_diagrams": 150,
+        "verify_diagrams": true,
+        "character_ref": "references/roshia_character.png",
+        "chart_engine": "render",
+        "map_engine": "render",
+        "photo_source": "web",
+        "beat_mode": true,
+        "chars_per_sec": 5.5,
+        "realphoto_watermark": true,
+        "chart_theme": {
+          "bg": "#FBFAF7", "main": "#1E3A5F", "accent": "#B22222",
+          "grid": "#E5E7EB", "text": "#1F2937", "font": "NotoSansJP"
+        },
+        "skip_decorative": false,
+        "web_image_count": 30,
+        "user_instructions": ""
+      }
+    }
+  ]
+}

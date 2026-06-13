@@ -86,25 +86,6 @@ def _build_user_block(user_instructions: str, style_preset: str) -> str:
             "- ラフな矢印・囲み・吹き出し\n"
             "- TED チャンネル・Sketchnoting のような図解"
         ),
-        "soviet_propaganda": (
-            "【スタイル: ソ連プロパガンダ風（深層プロンプティング・モード）】\n"
-            "世界観: 1920-1950年代モスクワ印刷工場、教育省発行ポスター。"
-            "Constructivism + Socialist Realism のハイブリッド。MoMA/テート・モダン展示級の傑作。\n"
-            "【プロンプトに必ず織り込む固定要素】\n"
-            "- 3色厳守: 深い赤(#8B0000-#A6192E、低彩度) / 純黒(#1A1A1A) / 肌色オフホワイト(#E8D5B7-#F0E0CC)\n"
-            "- フラット塗り、グラデなし\n"
-            "- 低視点、対角線構図、英雄的シルエット\n"
-            "- リトグラフ印刷の質感、紙の老化感\n"
-            "- テキストの後ろにわずかに傾いた赤/黒の角丸帯\n"
-            "- 参照精神: Rodchenko / Lissitzky / Mayakovsky / Toidze / Klimashin / Pravda新聞・Krokodil雑誌の挿絵\n"
-            "【教育チャンネル文脈の調整（最重要）】\n"
-            "- 武器ではなく、書物・地球儀・分析装置・建築 をシンボルに使う\n"
-            "- 「歴史的スタイルの再現」という立ち位置\n"
-            "【絶対禁止】4色以上 / 高彩度の原色赤 / 暴力・武器・ハンマー&鎌・赤い星 / "
-            "アニメ調 / 現代写実 / 可愛い系 / カラーコードの画像内表示 / 笑顔・親しみやすさ\n"
-            "【生成方針】センテンスの内容を上記固定要素に統合し、200〜400字相当の濃密な英文プロンプトにすること。"
-            "被写体（人物・概念）は英雄的シルエットや象徴物（書物・地球儀・建築）で表現する。"
-        ),
     }
     blocks.append(style_descriptions.get(style_preset, style_descriptions["flat_infographic"]))
     return "\n\n".join(blocks)
@@ -116,9 +97,23 @@ def generate_prompts_batch(
     title: str,
     user_instructions: str = "",
     style_preset: str = "flat_infographic",
+    worldview_desc: str = "",
 ) -> list:
     """1 バッチのセンテンスを英文プロンプト化"""
     user_block = _build_user_block(user_instructions, style_preset)
+    # 世界観・キャラ統一の指示（illustration/diagram/decorative に適用）
+    worldview_block = ""
+    if worldview_desc.strip():
+        worldview_block = f"""
+
+【世界観・キャラクター統一（最重要・illustration / diagram / decorative にのみ適用）】
+人物や情景を描くイラストでは、以下の世界観・キャラクター設定を**毎回一貫して**反映すること。
+登場人物・画風・色調・タッチを動画全体で統一し、シーンが変わっても同じ世界観に見せる:
+---
+{worldview_desc.strip()}
+---
+※ realphoto（実写）・map（衛星地図）・chart（グラフ）にはこの世界観を適用しない（実写・地図・数値はそのまま）。
+※ 人物が登場する illustration では必ず上のキャラクター設定の人物を使う。"""
 
     # Claude に渡す入力 + 自動抽出済み terms をヒントとして同梱
     # 各行の route（ルーター判定）を type として固定で渡す
@@ -151,7 +146,7 @@ def generate_prompts_batch(
 入力（type=その項目の描画種別。auto_extracted_terms は機械抽出した数値・年代・固有名詞のヒント）:
 {inputs_json}
 
-{user_block}
+{user_block}{worldview_block}
 
 【最重要: type 別の描き方】
 - **realphoto**: 実写写真。"photorealistic documentary photograph, real photo, natural lighting,
@@ -169,6 +164,9 @@ def generate_prompts_batch(
 2. メタファー（クマ＝ロシア など寓意）は**禁止**。国は国旗・国名・地図で直接表現する
 3. **画像内テキストは allowed_terms にあるものだけ**（厳格）
 4. 出力の type は入力の type を**そのまま返す**（勝手に変えない）
+5. **character フラグ**: 上の世界観設定に「繰り返し登場する固定キャラ（先生／教授／解説役）」
+   がある場合、そのキャラが実際に画面に描かれる illustration のときだけ "character": true。
+   図表(diagram/chart)・写真(realphoto)・地図(map)・人物のいないシーン・装飾は必ず false。
 
 【allowed_terms 抽出方針（積極的に入れる）】
 - センテンスに登場する以下は**すべて** allowed_terms に入れること:
@@ -206,7 +204,8 @@ def generate_prompts_batch(
     "no": (元のno),
     "prompt": "英語プロンプト（スタイル指示・テキスト制約を必ず含む）",
     "type": "illustration | realphoto | map | diagram | chart | decorative",
-    "allowed_terms": ["積極的に抽出した語"]
+    "allowed_terms": ["積極的に抽出した語"],
+    "character": true または false（ルール5。固定キャラ＝先生/教授/解説役が描かれる illustration のみ true）
   }},
   ...
 ]
@@ -247,6 +246,8 @@ def generate_prompts_batch(
                 p["type"] = forced_type
             elif p.get("type") not in ("illustration", "realphoto", "map", "diagram", "chart", "decorative"):
                 p["type"] = "illustration"
+            # character フラグは illustration のときだけ有効（図表/写真/地図/装飾では必ず False）
+            p["character"] = bool(p.get("character", False)) and p["type"] == "illustration"
             merged.append(p)
         else:
             # フォールバック
@@ -263,6 +264,7 @@ def generate_prompts_batch(
                 "prompt": fallback_prompt,
                 "type": "decorative",
                 "allowed_terms": auto_terms,
+                "character": False,
             })
     return merged
 
@@ -273,6 +275,7 @@ def generate_all_prompts(
     title: str,
     user_instructions: str = "",
     style_preset: str = "flat_infographic",
+    worldview_desc: str = "",
     max_workers: int = 6,
     log: Optional[Callable] = None,
 ) -> list:
@@ -283,14 +286,15 @@ def generate_all_prompts(
     for i in range(0, len(rows), BATCH_SIZE):
         batches.append(rows[i:i + BATCH_SIZE])
 
-    log("prompter", f"{len(rows)} センテンスを {len(batches)} バッチに分割（同時 {max_workers} 並列）/ style={style_preset}")
+    log("prompter", f"{len(rows)} センテンスを {len(batches)} バッチに分割（同時 {max_workers} 並列）/ style={style_preset}"
+                    + ("／世界観統一ON" if worldview_desc.strip() else ""))
 
     prompts_by_no = {}
     completed = 0
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_idx = {
-            executor.submit(generate_prompts_batch, client, batch, title, user_instructions, style_preset): i
+            executor.submit(generate_prompts_batch, client, batch, title, user_instructions, style_preset, worldview_desc): i
             for i, batch in enumerate(batches)
         }
         for future in as_completed(future_to_idx):
@@ -313,6 +317,7 @@ def generate_all_prompts(
         merged_row["prompt"] = p.get("prompt", "")
         merged_row["type"] = p.get("type", "illustration")
         merged_row["allowed_terms"] = p.get("allowed_terms", [])
+        merged_row["character"] = bool(p.get("character", False))  # キャラ固定フラグを引き継ぐ
         out_rows.append(merged_row)
 
     return out_rows

@@ -2,7 +2,14 @@ flask==3.1.2
 gunicorn==23.0.0
 jinja2==3.1.6
 anthropic==0.79.0
-google-genai>=1.47.0
-openai>=1.50.0
+google-genai==1.47.0
+openai==2.32.0
+# httpcore は pypi の index 取得が Render builder から繰り返しタイムアウトするため、
+# wheel を直接URLで指定して index 参照を回避する（pypi/Render の一時障害ワークアラウンド）。
+httpcore @ https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl
 pillow==11.1.0
 python-docx==1.1.2
+# v3 Step1: chart を matplotlib で決定論レンダリング（LLM不使用・文字化け/数値ズレを構造的に排除）
+matplotlib==3.9.4
+# v3 Step2: map を Natural Earth GeoJSON + matplotlib で正確描画（国境のデタラメを排除）
+shapely==2.0.7

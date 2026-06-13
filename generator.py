@@ -29,7 +29,12 @@ from PIL import Image
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-image-preview"
 DEFAULT_OPENAI_MODEL = "gpt-image-2"
 DEFAULT_CONCURRENCY = 12
-MAX_RETRIES = 3
+MAX_RETRIES = 2                # リトライ回数（多いとレート制限時に1枚が長時間スレッドを占有する）
+API_TIMEOUT_SEC = 120          # 1 回の画像生成 API 呼び出しの上限（応答停止対策）
+PER_IMAGE_HARD_TIMEOUT = 360   # 1 枚あたりの全体上限（リトライ込み・asyncio 側の最終防衛線）
+# 重要: MAX_RETRIES × API_TIMEOUT_SEC + リトライsleep合計 < PER_IMAGE_HARD_TIMEOUT を必ず満たす。
+# 満たさないと wait_for が先に発火し、実行中スレッドが残留（ゾンビ化）→ 実効並列が枯渇する。
+# 現状: 2×120 + (12+20) = 272s < 360s ✓
 
 # 出力アスペクト比（16:9 に統一）
 TARGET_RATIO = 16 / 9
@@ -105,28 +110,84 @@ def _save_as_16_9(image_bytes: bytes, output_path: Path) -> None:
 
     canvas.save(output_path, format="PNG")
 
+
+# ===== v3 Step5: realphoto キャプション焼き込み（報道映像との誤認防止）=====
+_CAPTION_FONT_DIR = Path(__file__).parent / "assets" / "fonts"
+_caption_font_cache = {}
+
+
+def _caption_font(size: int):
+    from PIL import ImageFont
+    if size in _caption_font_cache:
+        return _caption_font_cache[size]
+    f = None
+    p = _CAPTION_FONT_DIR / "NotoSansJP-Bold.ttf"
+    try:
+        if p.exists():
+            f = ImageFont.truetype(str(p), size)
+    except Exception:
+        f = None
+    if f is None:
+        f = ImageFont.load_default()
+    _caption_font_cache[size] = f
+    return f
+
+
+def add_image_caption(path, text: str = "イメージ") -> bool:
+    """画像の右下に半透明の「イメージ」キャプションを焼き込む（realphoto 用）。"""
+    try:
+        from PIL import Image, ImageDraw
+        im = Image.open(path).convert("RGBA")
+        W, H = im.size
+        overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(overlay)
+        fsize = max(22, H // 30)
+        font = _caption_font(fsize)
+        bbox = d.textbbox((0, 0), text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        pad = max(8, fsize // 3)
+        m = max(10, H // 60)
+        x1 = W - tw - pad * 2 - m
+        y1 = H - th - pad * 2 - m
+        d.rounded_rectangle([x1, y1, W - m, H - m], radius=pad, fill=(0, 0, 0, 130))
+        d.text((x1 + pad - bbox[0], y1 + pad - bbox[1]), text, font=font,
+               fill=(255, 255, 255, 230))
+        Image.alpha_composite(im, overlay).convert("RGB").save(path)
+        return True
+    except Exception as e:
+        print(f"  [caption ERROR] {str(e)[:80]}", flush=True)
+        return False
+
+
 # プロバイダ識別子
 PROVIDER_NANOBANANA = "nanobanana"
 PROVIDER_GPT_IMAGE = "gpt-image"
 VALID_PROVIDERS = (PROVIDER_NANOBANANA, PROVIDER_GPT_IMAGE)
 
+# 参照画像（キャラ固定）を使うときにプロンプト先頭へ付ける指示。
+# 参照画像の「人物」と「絵柄トーン」を新しいシーンでも忠実に再現させる。
+_CHARACTER_LOCK_INSTRUCTION = (
+    "CHARACTER & STYLE REFERENCE: The attached reference image shows the EXACT recurring "
+    "character (the teacher / professor) and the EXACT art style for this video series. "
+    "Reproduce the SAME person — identical face shape, hairstyle, glasses, skin tone and outfit "
+    "(gray tweed blazer over a dark red V-neck sweater) — and the SAME simple, clean, "
+    "thick-outline FLAT CARTOON tone, line weight and flat coloring as the reference image. "
+    "Only change the pose, expression and background to fit the new scene described below. "
+    "Do NOT redesign the character, and do NOT switch to a detailed, anime, or realistic style."
+)
 
-# ソ連プロパガンダ風の固定スタイル仕様（強制プレフィックス）
-SOVIET_PROPAGANDA_STYLE = (
-    "Style: 1920s-1950s Soviet propaganda poster (Moscow print factory, ministry of education). "
-    "Constructivism + Socialist Realism hybrid, museum-quality (MoMA / Tate Modern level). "
-    "STRICT 3-COLOR PALETTE ONLY: deep desaturated red (#8B0000 to #A6192E), pure black (#1A1A1A), "
-    "skin-tone off-white (#E8D5B7 to #F0E0CC). Use NO other colors. "
-    "Flat color fills, absolutely NO gradients. "
-    "Low camera angle, strong diagonal composition, heroic silhouettes. "
-    "Lithograph print texture with aged-paper feel. "
-    "Place any text on a slightly tilted red or black rounded-corner band. "
-    "Inspired by Rodchenko, Lissitzky, Mayakovsky, Toidze, Klimashin, and Pravda / Krokodil illustrations. "
-    "Educational-channel adaptation: use BOOKS, GLOBES, analytical instruments, and ARCHITECTURE "
-    "as the heroic symbols — NEVER weapons. This is a respectful reproduction of a historical art style. "
-    "STRICTLY FORBIDDEN: more than 3 colors, bright saturated primary red, any violence, weapons, "
-    "hammer-and-sickle, red star, anime style, modern photorealism, cute style, smiling faces, "
-    "friendliness, and showing any color codes / hex text inside the image. "
+# v3 Step6: エンティティ参照（一貫性ロック）。同じ被写体が繰り返し出るとき、初出画像を
+# 参照にして見た目を揃える。nanobanana は参照画像つき、gpt-image は文言のみ（v3.0）。
+_ENTITY_LOCK_INSTRUCTION = (
+    "CONSISTENCY REFERENCE: The attached reference image shows the SAME recurring subject that "
+    "appears earlier in this video. Maintain the SAME visual design, colors, shapes and overall "
+    "look as the reference image for this subject, changing only the composition to fit the new "
+    "scene described below. Keep it visually consistent so the video feels like one series."
+)
+_ENTITY_LOCK_TEXT_ONLY = (
+    "CONSISTENCY NOTE: This scene shows a recurring subject that appears multiple times in this "
+    "video. Keep its visual design, colors and overall look consistent with a clean, unified "
+    "series style, so repeated appearances of the same subject feel coherent."
 )
 
 
@@ -140,7 +201,6 @@ def _build_full_prompt(
 
     allowed_terms には「画像内に入れて良い日本語の語句」のホワイトリストを渡す。
     リストに無い文字・ラベル・数値はすべて画像から除外するよう AI に厳格指示する。
-    style_preset == "soviet_propaganda" の場合は固定のプロパガンダ様式を強制する。
     """
     style_hints = {
         "illustration": (
@@ -176,11 +236,7 @@ def _build_full_prompt(
             "Style: clean chart (bar / pie / line graph) with 3-5 data elements. "
         ),
     }
-    # プロパガンダ風が選択されている場合は type 別ヒントを上書き
-    if style_preset == "soviet_propaganda":
-        style = SOVIET_PROPAGANDA_STYLE
-    else:
-        style = style_hints.get(prompt_type, style_hints["illustration"])
+    style = style_hints.get(prompt_type, style_hints["illustration"])
 
     # 画像内テキストのホワイトリスト指示（最重要）
     terms = [t for t in (allowed_terms or []) if isinstance(t, str) and t.strip()]
@@ -234,14 +290,27 @@ def _sync_generate_image_gemini(
     full_prompt: str,
     output_path: Path,
     model_name: str = DEFAULT_GEMINI_MODEL,
+    reference_bytes: Optional[bytes] = None,  # キャラ固定の参照画像
+    reference_mime: str = "image/png",
 ) -> tuple:
-    """1 枚の画像を同期生成（Gemini）"""
+    """1 枚の画像を同期生成（Gemini）。
+
+    reference_bytes を渡すと参照画像 + テキストのマルチモーダル入力で生成し、
+    参照画像のキャラ・絵柄を新シーンに反映する（キャラ固定）。
+    """
     last_error = ""
     for attempt in range(MAX_RETRIES):
         try:
+            if reference_bytes:
+                contents = [
+                    types.Part.from_bytes(data=reference_bytes, mime_type=reference_mime),
+                    full_prompt,
+                ]
+            else:
+                contents = full_prompt
             response = client.models.generate_content(
                 model=model_name,
-                contents=full_prompt,
+                contents=contents,
                 config=types.GenerateContentConfig(
                     response_modalities=["TEXT", "IMAGE"],
                 ),
@@ -294,18 +363,36 @@ def _sync_generate_image_openai(
     model_name: str = DEFAULT_OPENAI_MODEL,
     size: str = "1536x1024",  # 3:2 横長（16:9 に最も近い）
     quality: str = "medium",  # low / medium / high
+    reference_bytes: Optional[bytes] = None,  # キャラ固定の参照画像（あれば images.edit）
 ) -> tuple:
-    """1 枚の画像を同期生成（OpenAI gpt-image-2）"""
+    """1 枚の画像を同期生成（OpenAI gpt-image）。
+
+    reference_bytes を渡すと images.edit を使い、参照画像のキャラ・絵柄を
+    反映した新シーンを生成する（キャラ固定）。無ければ通常の images.generate。
+    """
     last_error = ""
     for attempt in range(MAX_RETRIES):
         try:
-            response = client.images.generate(
-                model=model_name,
-                prompt=full_prompt,
-                n=1,
-                size=size,
-                quality=quality,
-            )
+            if reference_bytes:
+                import io
+                bio = io.BytesIO(reference_bytes)
+                bio.name = "reference.png"  # SDK が拡張子から MIME を判定
+                response = client.images.edit(
+                    model=model_name,
+                    image=bio,
+                    prompt=full_prompt,
+                    n=1,
+                    size=size,
+                    quality=quality,
+                )
+            else:
+                response = client.images.generate(
+                    model=model_name,
+                    prompt=full_prompt,
+                    n=1,
+                    size=size,
+                    quality=quality,
+                )
 
             if not response or not response.data:
                 last_error = "no data in response"
@@ -334,7 +421,8 @@ def _sync_generate_image_openai(
             last_error = err[:200]
             err_lower = err.lower()
             if "429" in err or "rate" in err_lower or "limit" in err_lower:
-                time.sleep(30 * (attempt + 1))
+                # レート制限。待ちすぎるとスレッドを長時間占有するので上限20秒。
+                time.sleep(min(20, 12 * (attempt + 1)))
                 continue
             if "safety" in err_lower or "policy" in err_lower or "moderation" in err_lower:
                 return False, f"content policy blocked: {err[:120]}"
@@ -363,6 +451,8 @@ class ParallelImageGenerator:
         concurrency: int = DEFAULT_CONCURRENCY,
         style_preset: str = "",
         progress_callback: Optional[Callable[[dict], None]] = None,
+        reference_image_path: Optional[str] = None,  # キャラ固定の参照画像パス
+        realphoto_watermark: bool = False,  # v3 Step5: realphoto に「イメージ」焼き込み
     ):
         if provider not in VALID_PROVIDERS:
             raise ValueError(f"unknown provider: {provider} (valid: {VALID_PROVIDERS})")
@@ -370,6 +460,20 @@ class ParallelImageGenerator:
         self.openai_quality = openai_quality
         self.openai_size = openai_size
         self.style_preset = style_preset
+        self.realphoto_watermark = bool(realphoto_watermark)
+
+        # 参照画像（キャラ固定用）。character=True のシーンでのみ使用。
+        # ファイルが無ければ None（=テキスト方式に自動フォールバック、壊れない）。
+        self.reference_bytes = None
+        self.reference_mime = "image/png"
+        if reference_image_path:
+            try:
+                rp = Path(reference_image_path)
+                if rp.exists() and rp.stat().st_size > 200:
+                    self.reference_bytes = rp.read_bytes()
+                    self.reference_mime = "image/jpeg" if rp.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+            except Exception:
+                self.reference_bytes = None
 
         # クライアント初期化（必要な分だけ）
         self.gemini_client = None
@@ -380,26 +484,54 @@ class ParallelImageGenerator:
         if provider == PROVIDER_NANOBANANA:
             if not gemini_api_key:
                 raise RuntimeError("nanobanana を使うには GEMINI_API_KEY が必要です")
-            self.gemini_client = genai.Client(api_key=gemini_api_key)
+            # HTTP タイムアウト（ミリ秒）を設定し、応答が止まった呼び出しを必ず失敗させる
+            try:
+                self.gemini_client = genai.Client(
+                    api_key=gemini_api_key,
+                    http_options=types.HttpOptions(timeout=API_TIMEOUT_SEC * 1000),
+                )
+            except Exception:
+                # 古い SDK で http_options 非対応の場合は従来通り
+                self.gemini_client = genai.Client(api_key=gemini_api_key)
         elif provider == PROVIDER_GPT_IMAGE:
             if not openai_api_key:
                 raise RuntimeError("gpt-image を使うには OPENAI_API_KEY が必要です")
             import openai  # 遅延 import
-            self.openai_client = openai.OpenAI(api_key=openai_api_key)
+            # タイムアウト + リトライ0（リトライは自前で制御）
+            self.openai_client = openai.OpenAI(api_key=openai_api_key, timeout=API_TIMEOUT_SEC, max_retries=0)
 
         self.concurrency = max(1, min(concurrency, 32))
         self.progress_callback = progress_callback or (lambda info: None)
+        self._executor = None  # generate_all で専用 ThreadPoolExecutor を割り当てる
         # Lock は async 関数内で生成する（Python 3.9 対策）
         self._counter_lock: Optional[asyncio.Lock] = None
+        # v3 Step6: エンティティ canonical の完成イベント／確保バイト列（generate_all で構築）
+        self._canonical_events: dict = {}
+        self._canonical_bytes: dict = {}
         self._completed = 0
         self._failed = 0
         self._total = 0
 
-    def _dispatch_sync_generate(self, full_prompt: str, output_path: Path) -> tuple:
-        """provider に応じた同期生成関数を呼び分ける"""
+    def _dispatch_sync_generate(self, full_prompt: str, output_path: Path,
+                                use_reference: bool = False,
+                                ref_bytes_override: Optional[bytes] = None,
+                                ref_mime_override: Optional[str] = None) -> tuple:
+        """provider に応じた同期生成関数を呼び分ける。
+
+        use_reference=True かつ参照画像があれば、キャラ固定モードで生成する。
+        ref_bytes_override を渡すと、その画像（v3 Step6 のエンティティ canonical 画像など）を
+        参照として使う（self.reference_bytes より優先）。
+        """
+        if ref_bytes_override is not None:
+            ref = ref_bytes_override
+            ref_mime = ref_mime_override or "image/png"
+        else:
+            ref = self.reference_bytes if use_reference else None
+            ref_mime = self.reference_mime
         if self.provider == PROVIDER_NANOBANANA:
             return _sync_generate_image_gemini(
-                self.gemini_client, full_prompt, output_path, self.gemini_model
+                self.gemini_client, full_prompt, output_path, self.gemini_model,
+                reference_bytes=ref, reference_mime=ref_mime,
             )
         else:  # gpt-image
             return _sync_generate_image_openai(
@@ -407,6 +539,7 @@ class ParallelImageGenerator:
                 model_name=self.openai_model,
                 size=self.openai_size,
                 quality=self.openai_quality,
+                reference_bytes=ref,
             )
 
     async def _generate_one(
@@ -428,6 +561,22 @@ class ParallelImageGenerator:
         filename = f"{idx}.png"  # 数字だけのファイル名（№と一致）
         output_path = output_dir / filename
 
+        # v3 Step6: エンティティ follower は、参照する canonical 画像の完成を待ってから
+        # セマフォを取りに行く（待機中はスロットを占有しない＝canonical が確実に進める）。
+        # ここで待つことで「直列化はエンティティ内のみ」を満たし、デッドロックを避ける。
+        entity_role = prompt_entry.get("entity_role")
+        entity_ref_bytes = None
+        # 参照画像の受け渡しは nanobanana のみ（gpt-image は文言のみ＝待機不要）。
+        if entity_role == "follower" and self.provider == PROVIDER_NANOBANANA:
+            canon_idx = prompt_entry.get("entity_ref_of")
+            ev = self._canonical_events.get(canon_idx) if self._canonical_events else None
+            if ev is not None:
+                try:
+                    await asyncio.wait_for(ev.wait(), timeout=PER_IMAGE_HARD_TIMEOUT)
+                except asyncio.TimeoutError:
+                    pass  # canonical が間に合わなければ参照なしで進む（壊さない）
+                entity_ref_bytes = (self._canonical_bytes or {}).get(canon_idx)
+
         async with semaphore:
             self.progress_callback({
                 "index": idx,
@@ -439,17 +588,60 @@ class ParallelImageGenerator:
             })
 
             full_prompt = _build_full_prompt(prompt_text, prompt_type, allowed_terms=allowed_terms, style_preset=row_style)
+            # キャラ固定: character=True かつ参照画像があるシーンだけ参照モードで生成
+            use_reference = bool(prompt_entry.get("character")) and self.reference_bytes is not None
+            if use_reference:
+                full_prompt = _CHARACTER_LOCK_INSTRUCTION + "\n\n" + full_prompt
+
+            # v3 Step6: エンティティ follower の一貫性ロック（キャラ固定シーンとは排他）。
+            # nanobanana は canonical 画像を参照に渡す。gpt-image は文言のみ（v3.0）。
+            ref_override = None
+            if entity_role == "follower" and not use_reference:
+                if self.provider == PROVIDER_NANOBANANA and entity_ref_bytes:
+                    ref_override = entity_ref_bytes
+                    full_prompt = _ENTITY_LOCK_INSTRUCTION + "\n\n" + full_prompt
+                else:
+                    full_prompt = _ENTITY_LOCK_TEXT_ONLY + "\n\n" + full_prompt
+
             loop = asyncio.get_running_loop()
 
             try:
-                success, error = await loop.run_in_executor(
-                    None,
-                    self._dispatch_sync_generate,
-                    full_prompt,
-                    output_path,
+                # 専用 executor + asyncio.wait_for で、1 枚が固まっても
+                # 全体（asyncio.gather）を巻き込まないようハード上限を設ける
+                success, error = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        self._executor,
+                        self._dispatch_sync_generate,
+                        full_prompt,
+                        output_path,
+                        use_reference,
+                        ref_override,
+                    ),
+                    timeout=PER_IMAGE_HARD_TIMEOUT,
                 )
+            except asyncio.TimeoutError:
+                success, error = False, f"timeout (> {PER_IMAGE_HARD_TIMEOUT}s)"
             except Exception as e:
                 success, error = False, str(e)[:200]
+
+            # v3 Step5: realphoto は「イメージ」を焼き込む（報道映像との誤認防止）
+            if success and prompt_type == "realphoto" and self.realphoto_watermark:
+                try:
+                    await loop.run_in_executor(self._executor, add_image_caption, output_path)
+                except Exception:
+                    pass
+
+            # v3 Step6: canonical は完成画像を後続(follower)の参照用に確保し、待機を解除する。
+            # 失敗時も必ず解除して follower を無限待機させない（参照なしで進む）。nanobanana のみ。
+            if entity_role == "canonical" and self.provider == PROVIDER_NANOBANANA:
+                if success and self._canonical_bytes is not None:
+                    try:
+                        self._canonical_bytes[idx] = output_path.read_bytes()
+                    except Exception:
+                        self._canonical_bytes[idx] = None
+                ev = self._canonical_events.get(idx) if self._canonical_events else None
+                if ev is not None:
+                    ev.set()
 
             async with self._counter_lock:
                 if success:
@@ -491,6 +683,7 @@ class ParallelImageGenerator:
 
     async def generate_all(self, prompts: list, output_dir: Path) -> list:
         """全プロンプトを並列生成"""
+        from concurrent.futures import ThreadPoolExecutor
         output_dir.mkdir(parents=True, exist_ok=True)
         self._completed = 0
         self._failed = 0
@@ -499,11 +692,60 @@ class ParallelImageGenerator:
         # asyncio オブジェクトは running loop の中で生成する
         self._counter_lock = asyncio.Lock()
         semaphore = asyncio.Semaphore(self.concurrency)
-        tasks = [
-            self._generate_one(p, output_dir, semaphore)
-            for p in prompts
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=False)
+        # v3 Step6: エンティティ canonical の完成イベント群を running loop 内で生成。
+        # follower は対応する canonical のイベントを待ってから生成する（nanobanana のみ）。
+        self._canonical_events = {}
+        self._canonical_bytes = {}
+        if self.provider == PROVIDER_NANOBANANA:
+            for p in prompts:
+                if p.get("entity_role") == "canonical":
+                    ci = p.get("index")
+                    if ci is not None:
+                        self._canonical_events[ci] = asyncio.Event()
+                        self._canonical_bytes[ci] = None
+        # 専用スレッドプール（デフォルト executor のスレッド枯渇を防ぐ）。
+        # 固まったスレッドが居ても新しい画像生成が進められるよう余裕を持たせる
+        self._executor = ThreadPoolExecutor(max_workers=self.concurrency + 4)
+        # 全体の時間予算（安全網）: 超えたら未完了を打ち切り、必ず完了させる。
+        # 自然完了の理論上限（バッチ数 × 1枚ハード上限）＋余裕に設定するので、
+        # 正常な「遅いだけ」のジョブは切らず、真の暴走（無限ハング）だけを止める。最大4時間。
+        batches = (len(prompts) + self.concurrency - 1) // max(1, self.concurrency)
+        overall_budget = min(14400, max(1800, batches * (PER_IMAGE_HARD_TIMEOUT + 90)))
+        try:
+            tasks = [
+                asyncio.ensure_future(self._generate_one(p, output_dir, semaphore))
+                for p in prompts
+            ]
+            done, pending = await asyncio.wait(tasks, timeout=overall_budget)
+            if pending:
+                print(f"  [generator] 時間予算({overall_budget}s)超過: 未完了 {len(pending)} 枚を打ち切り", flush=True)
+        finally:
+            self._executor.shutdown(wait=False)
+
+        # 入力順に正規化。未完了はキャンセルして「失敗」確定（行の🌀を必ず消す）。
+        results = []
+        for i, t in enumerate(tasks):
+            idx = prompts[i].get("index", i + 1) if i < len(prompts) else i + 1
+            if t in done:
+                try:
+                    r = t.result()
+                    results.append(r if isinstance(r, dict) else {
+                        "index": idx, "filename": None, "success": False,
+                        "error": f"task error: {str(r)[:120]}"})
+                except Exception as e:
+                    results.append({"index": idx, "filename": None, "success": False,
+                                    "error": f"task error: {str(e)[:120]}"})
+            else:
+                t.cancel()
+                try:
+                    self.progress_callback({
+                        "index": idx, "status": "failed", "provider": self.provider,
+                        "error": "時間上限により打ち切り（並列度を下げる/枚数を分割してください）",
+                    })
+                except Exception:
+                    pass
+                results.append({"index": idx, "filename": None, "success": False,
+                                "error": "時間上限により打ち切り"})
         return results
 
 
@@ -520,6 +762,8 @@ def run_parallel_generation(
     concurrency: int = DEFAULT_CONCURRENCY,
     style_preset: str = "",
     progress_callback: Optional[Callable[[dict], None]] = None,
+    reference_image_path: Optional[str] = None,  # キャラ固定の参照画像
+    realphoto_watermark: bool = False,  # v3 Step5: realphoto に「イメージ」焼き込み
 ) -> list:
     """同期エントリポイント: pipeline から呼び出す"""
     # 環境変数からデフォルト補完
@@ -543,5 +787,7 @@ def run_parallel_generation(
         concurrency=concurrency,
         style_preset=style_preset,
         progress_callback=progress_callback,
+        reference_image_path=reference_image_path,
+        realphoto_watermark=realphoto_watermark,
     )
     return asyncio.run(generator.generate_all(prompts, output_dir))
