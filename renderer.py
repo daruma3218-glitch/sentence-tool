@@ -535,6 +535,62 @@ def _resolve_extent(spec: dict, geo: dict, countries: list):
     return (xs0 - padx, xs1 + padx, ys0 - pady, ys1 + pady)
 
 
+def _shift_text_px(ax, t, dx, dy):
+    """テキストを表示ピクセル単位で移動（位置は data 座標で保持）。"""
+    x, y = t.get_position()
+    disp = ax.transData.transform((x, y))
+    nd = ax.transData.inverted().transform((disp[0] + dx, disp[1] + dy))
+    t.set_position((nd[0], nd[1]))
+
+
+def _deconflict_texts(fig, ax, texts, pad_px=5, max_iter=14):
+    """重なるラベルを縦にずらして衝突を解消（display座標で判定）。
+
+    地図の国名ラベルとルート区間ラベルが密集地（例: ウクライナ/ベラルーシ周辺）で
+    重なって読めなくなる問題を防ぐ。決定論で動く軽量版。
+    """
+    texts = [t for t in texts if t is not None]
+    if len(texts) < 2:
+        return
+    try:
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+    except Exception:
+        return
+    for _ in range(max_iter):
+        try:
+            boxes = [t.get_window_extent(renderer=renderer) for t in texts]
+        except Exception:
+            return
+        moved = False
+        for i in range(len(texts)):
+            for j in range(i + 1, len(texts)):
+                bi, bj = boxes[i], boxes[j]
+                # 矩形が重なっているか（パディング込み）
+                if (bi.x0 < bj.x1 + pad_px and bj.x0 < bi.x1 + pad_px and
+                        bi.y0 < bj.y1 + pad_px and bj.y0 < bi.y1 + pad_px):
+                    overlap_y = min(bi.y1, bj.y1) - max(bi.y0, bj.y0) + pad_px
+                    if overlap_y <= 0:
+                        continue
+                    shift = overlap_y / 2 + 1
+                    ci = (bi.y0 + bi.y1) / 2
+                    cj = (bj.y0 + bj.y1) / 2
+                    # 中心が上の方を上へ、下の方を下へ
+                    if ci >= cj:
+                        _shift_text_px(ax, texts[i], 0, shift)
+                        _shift_text_px(ax, texts[j], 0, -shift)
+                    else:
+                        _shift_text_px(ax, texts[i], 0, -shift)
+                        _shift_text_px(ax, texts[j], 0, shift)
+                    moved = True
+        if not moved:
+            break
+        try:
+            fig.canvas.draw()
+        except Exception:
+            return
+
+
 def render_map(spec: dict, output_path, theme: dict = None) -> bool:
     """map_spec を 1920x1080 PNG に描画する。
 
@@ -591,12 +647,14 @@ def render_map(spec: dict, output_path, theme: dict = None) -> bool:
         else:
             for iso in focus:
                 label_targets.append((iso, geo[iso]["name_ja"]))
+        map_labels = []  # 衝突回避の対象（国名＋ルート区間ラベル）
         for iso, txt in label_targets:
             px, py = _rep_point(geo[iso], extent=(x0, x1, y0, y1))
             if x0 <= px <= x1 and y0 <= py <= y1:
-                ax.text(px, py, txt, ha="center", va="center", fontsize=34,
-                        fontweight="bold", color=theme["text"], zorder=6,
-                        path_effects=stroke)
+                t = ax.text(px, py, txt, ha="center", va="center", fontsize=32,
+                            fontweight="bold", color=theme["text"], zorder=6,
+                            path_effects=stroke)
+                map_labels.append(t)
         # 矢印（route 型）
         if mtype == "route":
             for ar in (spec.get("arrows") or []):
@@ -609,10 +667,13 @@ def render_map(spec: dict, output_path, theme: dict = None) -> bool:
                                                 lw=5, connectionstyle="arc3,rad=0.2",
                                                 shrinkA=8, shrinkB=8), zorder=7)
                     if ar.get("label"):
-                        ax.text((ax_ + bx_) / 2, (ay_ + by_) / 2 + 1.5, ar["label"],
-                                ha="center", va="center", fontsize=26,
-                                fontweight="bold", color=theme["main"], zorder=8,
-                                path_effects=stroke)
+                        t = ax.text((ax_ + bx_) / 2, (ay_ + by_) / 2 + 1.5, ar["label"],
+                                    ha="center", va="center", fontsize=24,
+                                    fontweight="bold", color=theme["main"], zorder=8,
+                                    path_effects=stroke)
+                        map_labels.append(t)
+        # ラベル同士の重なりを自動解消（密集地で読めなくなるのを防ぐ）
+        _deconflict_texts(fig, ax, map_labels)
         _draw_title_and_source(fig, spec, theme)
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(str(output_path), dpi=_DPI, facecolor=theme["bg"])

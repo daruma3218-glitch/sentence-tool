@@ -85,6 +85,29 @@ def test_big_number_huge_renders(tmp_path):
         assert im.size == (1920, 1080)
 
 
+def test_deconflict_texts_separates_overlap():
+    """重なる2つのラベルが、衝突回避で離れる（display bbox が重ならない）。"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    fig = plt.figure(figsize=(renderer._W_IN, renderer._H_IN), dpi=renderer._DPI)
+    ax = fig.add_axes([0.05, 0.05, 0.9, 0.9])
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 10)
+    try:
+        t1 = ax.text(5, 5, "ベラルーシ", ha="center", va="center", fontsize=32, fontweight="bold")
+        t2 = ax.text(5, 5, "キーウへの進軍ルート", ha="center", va="center", fontsize=24, fontweight="bold")
+        renderer._deconflict_texts(fig, ax, [t1, t2])
+        r = fig.canvas.get_renderer()
+        b1 = t1.get_window_extent(renderer=r)
+        b2 = t2.get_window_extent(renderer=r)
+        # 縦の重なりが解消されている（どちらかが完全に上/下）
+        no_vertical_overlap = (b1.y0 >= b2.y1 - 1) or (b2.y0 >= b1.y1 - 1)
+        assert no_vertical_overlap, "重なったラベルが分離されていない"
+    finally:
+        plt.close(fig)
+
+
 def test_clear_geo_cache_frees_memory():
     """地図キャッシュを読み込み→解放できる（512MB環境のOOM緩和）。空でも例外なし。"""
     # 空の状態で呼んでも落ちない
