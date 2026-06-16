@@ -543,7 +543,7 @@ def _shift_text_px(ax, t, dx, dy):
     t.set_position((nd[0], nd[1]))
 
 
-def _deconflict_texts(fig, ax, texts, pad_px=5, max_iter=14):
+def _deconflict_texts(fig, ax, texts, pad_px=10, max_iter=20):
     """重なるラベルを縦にずらして衝突を解消（display座標で判定）。
 
     地図の国名ラベルとルート区間ラベルが密集地（例: ウクライナ/ベラルーシ周辺）で
